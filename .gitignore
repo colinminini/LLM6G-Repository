@@ -1,3 +1,4 @@
+.venv/
 __pycache__/
 data/histo_trafic_instant.csv
 data/processed_trafic_instant.jsonl

@@ -37,5 +37,5 @@ Forecasting per-sector traffic to support energy-aware radio access networks usi
 - Synthetic instantaneous subset (`results/summary_hist_trafic_instant_short.csv`, 5 sectors): best RMSE from `amazon/chronos-bolt-base` (5.14). Parameter count does not monotonically improve accuracy.
 
 ## References
-- [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`sources/Chronos.pdf`)
-- [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`sources/KTH.pdf`)
+- [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`support/Chronos.pdf`)
+- [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`support/KTH.pdf`)

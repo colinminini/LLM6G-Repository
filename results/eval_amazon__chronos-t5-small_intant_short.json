@@ -1,0 +1,44 @@
+{
+  "model_id": "amazon/chronos-t5-small",
+  "timestamp_utc": "2025-12-02T18:49:04.942954+00:00",
+  "num_series": 5,
+  "num_samples": 32,
+  "rmse": 6.239491235846177,
+  "per_series": [
+    {
+      "sector": "T70744A",
+      "site": "T70744A",
+      "target": 0.0,
+      "prediction": 0.34950634837150574,
+      "squared_error": 0.12215468755198433
+    },
+    {
+      "sector": "T77125C",
+      "site": "T77125C",
+      "target": 0.0,
+      "prediction": 5.361310005187988,
+      "squared_error": 28.743644971728827
+    },
+    {
+      "sector": "T78258B",
+      "site": "T78258B",
+      "target": 9.41030984708706,
+      "prediction": 8.15151309967041,
+      "squared_error": 1.5845692513067366
+    },
+    {
+      "sector": "T78271C",
+      "site": "T78271C",
+      "target": 14.661093619278745,
+      "prediction": 1.859363317489624,
+      "squared_error": 163.88429871974577
+    },
+    {
+      "sector": "T78273C",
+      "site": "T78273C",
+      "target": 0.0,
+      "prediction": 0.5670862197875977,
+      "squared_error": 0.3215867806729875
+    }
+  ]
+}

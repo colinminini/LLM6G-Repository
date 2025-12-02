@@ -1,0 +1,13 @@
+numpy>=1.26
+pandas>=2.1.0
+scikit-learn>=1.4
+matplotlib>=3.8
+seaborn>=0.13
+jupyter>=1.0
+pyarrow>=14.0.1
+
+# Core deep learning stacks
+torch>=2.3
+
+# Time-series forecasting (bolt/t5 support requires >=1.0.0)
+chronos-forecasting>=1.0.0

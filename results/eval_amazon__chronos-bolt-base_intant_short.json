@@ -1,0 +1,44 @@
+{
+  "model_id": "amazon/chronos-bolt-base",
+  "timestamp_utc": "2025-12-02T18:48:46.136676+00:00",
+  "num_series": 5,
+  "num_samples": 32,
+  "rmse": 5.136658889279386,
+  "per_series": [
+    {
+      "sector": "T70744A",
+      "site": "T70744A",
+      "target": 0.0,
+      "prediction": 0.5849885940551758,
+      "squared_error": 0.34221165517465124
+    },
+    {
+      "sector": "T77125C",
+      "site": "T77125C",
+      "target": 0.0,
+      "prediction": 0.7083826065063477,
+      "squared_error": 0.501805917200727
+    },
+    {
+      "sector": "T78258B",
+      "site": "T78258B",
+      "target": 9.41030984708706,
+      "prediction": 3.9047250747680664,
+      "squared_error": 30.311463685190784
+    },
+    {
+      "sector": "T78271C",
+      "site": "T78271C",
+      "target": 14.661093619278745,
+      "prediction": 4.973819255828857,
+      "squared_error": 93.84328459275342
+    },
+    {
+      "sector": "T78273C",
+      "site": "T78273C",
+      "target": 0.0,
+      "prediction": 2.6320252418518066,
+      "squared_error": 6.927556873745061
+    }
+  ]
+}

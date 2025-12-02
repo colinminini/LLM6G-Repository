@@ -1,0 +1,611 @@
+{
+  "model_id": "amazon/chronos-t5-small",
+  "timestamp_utc": "2025-12-02T18:52:43.630895+00:00",
+  "num_series": 86,
+  "num_samples": 32,
+  "rmse": 8.120713542520788,
+  "per_series": [
+    {
+      "sector": "T36870A",
+      "site": "T36870",
+      "target": 15.44474611,
+      "prediction": 21.126901626586914,
+      "squared_error": 32.286891314679096
+    },
+    {
+      "sector": "T36870B",
+      "site": "T36870",
+      "target": 5.575435392,
+      "prediction": 5.4578142166137695,
+      "squared_error": 0.013834740899238425
+    },
+    {
+      "sector": "T70721A",
+      "site": "T70721",
+      "target": 3.751870714,
+      "prediction": 3.454883575439453,
+      "squared_error": 0.08820136047038137
+    },
+    {
+      "sector": "T70721B",
+      "site": "T70721",
+      "target": 3.623499056,
+      "prediction": 3.2927772998809814,
+      "squared_error": 0.10937687997044758
+    },
+    {
+      "sector": "T70721C",
+      "site": "T70721",
+      "target": 1.596156529,
+      "prediction": 1.2365152835845947,
+      "squared_error": 0.1293418254039437
+    },
+    {
+      "sector": "T70722A",
+      "site": "T70722",
+      "target": 11.26900214,
+      "prediction": 13.253007888793945,
+      "squared_error": 3.9362788112474254
+    },
+    {
+      "sector": "T70722B",
+      "site": "T70722",
+      "target": 46.47747963,
+      "prediction": 40.06275939941406,
+      "squared_error": 41.148635636688475
+    },
+    {
+      "sector": "T70722C",
+      "site": "T70722",
+      "target": 59.16287468,
+      "prediction": 51.68887710571289,
+      "squared_error": 55.86063974044962
+    },
+    {
+      "sector": "T70724A",
+      "site": "T70724",
+      "target": 38.94096003,
+      "prediction": 32.58082962036133,
+      "squared_error": 40.45125882761057
+    },
+    {
+      "sector": "T70724B",
+      "site": "T70724",
+      "target": 25.5653429,
+      "prediction": 19.70409393310547,
+      "squared_error": 34.35423945192222
+    },
+    {
+      "sector": "T70724C",
+      "site": "T70724",
+      "target": 30.84409719,
+      "prediction": 32.35407638549805,
+      "squared_error": 2.280037170836931
+    },
+    {
+      "sector": "T70725A",
+      "site": "T70725",
+      "target": 39.34383255,
+      "prediction": 48.98298263549805,
+      "squared_error": 92.91321437075696
+    },
+    {
+      "sector": "T70725B",
+      "site": "T70725",
+      "target": 48.30554605,
+      "prediction": 46.28173828125,
+      "squared_error": 4.09579788485284
+    },
+    {
+      "sector": "T70725C",
+      "site": "T70725",
+      "target": 35.10853645,
+      "prediction": 22.54444122314453,
+      "squared_error": 157.85648886949244
+    },
+    {
+      "sector": "T70730A",
+      "site": "T70730",
+      "target": 44.04915939,
+      "prediction": 43.220611572265625,
+      "squared_error": 0.6864914862723948
+    },
+    {
+      "sector": "T70730B",
+      "site": "T70730",
+      "target": 42.14871271,
+      "prediction": 40.624237060546875,
+      "squared_error": 2.3240260057755213
+    },
+    {
+      "sector": "T70730C",
+      "site": "T70730",
+      "target": 20.38774091,
+      "prediction": 17.508447647094727,
+      "squared_error": 8.290329693811705
+    },
+    {
+      "sector": "T70731A",
+      "site": "T70731",
+      "target": 9.686235146,
+      "prediction": 8.040323257446289,
+      "squared_error": 2.709025944882442
+    },
+    {
+      "sector": "T70731B",
+      "site": "T70731",
+      "target": 42.15082147,
+      "prediction": 44.46745681762695,
+      "squared_error": 5.366799333874669
+    },
+    {
+      "sector": "T70731C",
+      "site": "T70731",
+      "target": 41.51062412,
+      "prediction": 44.158599853515625,
+      "squared_error": 7.011775485287598
+    },
+    {
+      "sector": "T70735A",
+      "site": "T70735",
+      "target": 26.89397971,
+      "prediction": 26.151050567626953,
+      "squared_error": 0.551943710587151
+    },
+    {
+      "sector": "T70735B",
+      "site": "T70735",
+      "target": 20.98177691,
+      "prediction": 20.977619171142578,
+      "squared_error": 1.728679240652132e-05
+    },
+    {
+      "sector": "T70735C",
+      "site": "T70735",
+      "target": 23.69478003,
+      "prediction": 25.954898834228516,
+      "squared_error": 5.108137009227334
+    },
+    {
+      "sector": "T70736A",
+      "site": "T70736",
+      "target": 18.06576047,
+      "prediction": 15.08960247039795,
+      "squared_error": 8.857516438595285
+    },
+    {
+      "sector": "T70736B",
+      "site": "T70736",
+      "target": 37.8087382,
+      "prediction": 36.230682373046875,
+      "squared_error": 2.490260192980713
+    },
+    {
+      "sector": "T70736C",
+      "site": "T70736",
+      "target": 53.02603522,
+      "prediction": 45.631954193115234,
+      "squared_error": 54.67243423213723
+    },
+    {
+      "sector": "T70737A",
+      "site": "T70737",
+      "target": 35.73828388,
+      "prediction": 37.277862548828125,
+      "squared_error": 2.3703024775105894
+    },
+    {
+      "sector": "T70737B",
+      "site": "T70737",
+      "target": 40.83308894,
+      "prediction": 31.158164978027344,
+      "squared_error": 93.60415366995274
+    },
+    {
+      "sector": "T70737C",
+      "site": "T70737",
+      "target": 20.33037543,
+      "prediction": 16.51844024658203,
+      "squared_error": 14.530849842579784
+    },
+    {
+      "sector": "T70738A",
+      "site": "T70738",
+      "target": 45.79219095,
+      "prediction": 49.264198303222656,
+      "squared_error": 12.054835060832206
+    },
+    {
+      "sector": "T70738B",
+      "site": "T70738",
+      "target": 24.15787769,
+      "prediction": 19.10543441772461,
+      "squared_error": 25.52718301956085
+    },
+    {
+      "sector": "T70738C",
+      "site": "T70738",
+      "target": 54.66552985,
+      "prediction": 56.37609100341797,
+      "squared_error": 2.926019459582616
+    },
+    {
+      "sector": "T70743A",
+      "site": "T70743",
+      "target": 6.463182674,
+      "prediction": 4.104414939880371,
+      "squared_error": 5.563785223523847
+    },
+    {
+      "sector": "T70743B",
+      "site": "T70743",
+      "target": 23.47580372,
+      "prediction": 22.808589935302734,
+      "squared_error": 0.44517423449004684
+    },
+    {
+      "sector": "T70743C",
+      "site": "T70743",
+      "target": 14.27130999,
+      "prediction": 16.27281951904297,
+      "squared_error": 4.006040394849804
+    },
+    {
+      "sector": "T70744A",
+      "site": "T70744",
+      "target": 73.81191588,
+      "prediction": 64.5773696899414,
+      "squared_error": 85.2768433363257
+    },
+    {
+      "sector": "T70744B",
+      "site": "T70744",
+      "target": 98.00278259,
+      "prediction": 66.76973724365234,
+      "squared_error": 975.5031216070087
+    },
+    {
+      "sector": "T70744C",
+      "site": "T70744",
+      "target": 22.88048646,
+      "prediction": 17.955284118652344,
+      "squared_error": 24.257618103216437
+    },
+    {
+      "sector": "T70745A",
+      "site": "T70745",
+      "target": 50.1176759,
+      "prediction": 43.71513366699219,
+      "squared_error": 40.99254704544869
+    },
+    {
+      "sector": "T70745B",
+      "site": "T70745",
+      "target": 42.85376807,
+      "prediction": 49.42103576660156,
+      "squared_error": 43.12900499882638
+    },
+    {
+      "sector": "T70745C",
+      "site": "T70745",
+      "target": 10.2394319,
+      "prediction": 8.473854064941406,
+      "squared_error": 3.1172650916501894
+    },
+    {
+      "sector": "T70747A",
+      "site": "T70747",
+      "target": 12.25143314,
+      "prediction": 13.308162689208984,
+      "squared_error": 1.116677340171424
+    },
+    {
+      "sector": "T70747B",
+      "site": "T70747",
+      "target": 14.64550083,
+      "prediction": 13.113052368164062,
+      "squared_error": 2.3483982881833296
+    },
+    {
+      "sector": "T70747C",
+      "site": "T70747",
+      "target": 5.965818372,
+      "prediction": 7.904635429382324,
+      "squared_error": 3.759011581996654
+    },
+    {
+      "sector": "T76995A",
+      "site": "T76995",
+      "target": 11.17246141,
+      "prediction": 12.862706184387207,
+      "squared_error": 2.856927397343259
+    },
+    {
+      "sector": "T76995B",
+      "site": "T76995",
+      "target": 6.698666257,
+      "prediction": 6.918578147888184,
+      "squared_error": 0.04836123975401629
+    },
+    {
+      "sector": "T76995C",
+      "site": "T76995",
+      "target": 14.54479306,
+      "prediction": 17.55341339111328,
+      "squared_error": 9.05179629678819
+    },
+    {
+      "sector": "T77125A",
+      "site": "T77125",
+      "target": 27.87349127,
+      "prediction": 32.68096923828125,
+      "squared_error": 23.111844415509626
+    },
+    {
+      "sector": "T77125B",
+      "site": "T77125",
+      "target": 18.02480042,
+      "prediction": 19.6851806640625,
+      "squared_error": 2.7568625548730528
+    },
+    {
+      "sector": "T77125C",
+      "site": "T77125",
+      "target": 63.82776641,
+      "prediction": 66.84016418457031,
+      "squared_error": 9.074540352236157
+    },
+    {
+      "sector": "T78256A",
+      "site": "T78256",
+      "target": 43.40765419,
+      "prediction": 47.904335021972656,
+      "squared_error": 20.220138504630278
+    },
+    {
+      "sector": "T78256B",
+      "site": "T78256",
+      "target": 82.49681314,
+      "prediction": 77.0885009765625,
+      "squared_error": 29.249840457186018
+    },
+    {
+      "sector": "T78256C",
+      "site": "T78256",
+      "target": 53.65012839,
+      "prediction": 52.99026107788086,
+      "squared_error": 0.43542486960333804
+    },
+    {
+      "sector": "T78258A",
+      "site": "T78258",
+      "target": 39.43293227,
+      "prediction": 30.153732299804688,
+      "squared_error": 86.10355208687272
+    },
+    {
+      "sector": "T78258B",
+      "site": "T78258",
+      "target": 93.25642883,
+      "prediction": 57.62675476074219,
+      "squared_error": 1269.4736742815428
+    },
+    {
+      "sector": "T78258C",
+      "site": "T78258",
+      "target": 61.24342359,
+      "prediction": 43.27927017211914,
+      "squared_error": 322.7108080211605
+    },
+    {
+      "sector": "T78259A",
+      "site": "T78259",
+      "target": 40.49352739,
+      "prediction": 44.107093811035156,
+      "squared_error": 13.05786227923285
+    },
+    {
+      "sector": "T78259B",
+      "site": "T78259",
+      "target": 45.17048658,
+      "prediction": 41.07335662841797,
+      "squared_error": 16.786473840150595
+    },
+    {
+      "sector": "T78259C",
+      "site": "T78259",
+      "target": 75.05139644,
+      "prediction": 50.992984771728516,
+      "squared_error": 578.8071720000218
+    },
+    {
+      "sector": "T78262A",
+      "site": "T78262",
+      "target": 73.19113278,
+      "prediction": 64.10677337646484,
+      "squared_error": 82.5255857725977
+    },
+    {
+      "sector": "T78262B",
+      "site": "T78262",
+      "target": 43.50873548,
+      "prediction": 40.27617645263672,
+      "squared_error": 10.449437865387834
+    },
+    {
+      "sector": "T78262C",
+      "site": "T78262",
+      "target": 55.80680596,
+      "prediction": 42.85041046142578,
+      "squared_error": 167.86818431547422
+    },
+    {
+      "sector": "T78264A",
+      "site": "T78264",
+      "target": 6.054232522,
+      "prediction": 2.313843250274658,
+      "squared_error": 13.990511904038035
+    },
+    {
+      "sector": "T78264B",
+      "site": "T78264",
+      "target": 10.00825364,
+      "prediction": 5.5462141036987305,
+      "squared_error": 19.909796823515645
+    },
+    {
+      "sector": "T78264C",
+      "site": "T78264",
+      "target": 8.214684309,
+      "prediction": 6.613818168640137,
+      "squared_error": 2.562772399350688
+    },
+    {
+      "sector": "T78269A",
+      "site": "T78269",
+      "target": 85.47587985,
+      "prediction": 71.83230590820312,
+      "squared_error": 186.14710990527868
+    },
+    {
+      "sector": "T78269B",
+      "site": "T78269",
+      "target": 65.31600648,
+      "prediction": 67.2789306640625,
+      "squared_error": 3.8530713523774365
+    },
+    {
+      "sector": "T78269C",
+      "site": "T78269",
+      "target": 36.86322958,
+      "prediction": 28.067731857299805,
+      "squared_error": 77.36078019002436
+    },
+    {
+      "sector": "T78270A",
+      "site": "T78270",
+      "target": 36.85961594,
+      "prediction": 29.737396240234375,
+      "squared_error": 50.726013451729514
+    },
+    {
+      "sector": "T78270B",
+      "site": "T78270",
+      "target": 32.40679045,
+      "prediction": 27.624841690063477,
+      "squared_error": 22.86703394265848
+    },
+    {
+      "sector": "T78270C",
+      "site": "T78270",
+      "target": 35.32614254,
+      "prediction": 38.73370361328125,
+      "squared_error": 11.611472468141669
+    },
+    {
+      "sector": "T78271A",
+      "site": "T78271",
+      "target": 73.42922217,
+      "prediction": 64.13613891601562,
+      "squared_error": 86.36139636548486
+    },
+    {
+      "sector": "T78271B",
+      "site": "T78271",
+      "target": 72.06500836,
+      "prediction": 58.61091232299805,
+      "squared_error": 181.01270017287146
+    },
+    {
+      "sector": "T78271C",
+      "site": "T78271",
+      "target": 117.3566659,
+      "prediction": 117.26094055175781,
+      "squared_error": 0.00916334229608728
+    },
+    {
+      "sector": "T78273A",
+      "site": "T78273",
+      "target": 21.78569678,
+      "prediction": 21.882095336914062,
+      "squared_error": 0.009292681775114029
+    },
+    {
+      "sector": "T78273B",
+      "site": "T78273",
+      "target": 60.30686577,
+      "prediction": 51.92829132080078,
+      "squared_error": 70.20050980077401
+    },
+    {
+      "sector": "T78273C",
+      "site": "T78273",
+      "target": 106.2705068,
+      "prediction": 103.65142822265625,
+      "squared_error": 6.859572594300997
+    },
+    {
+      "sector": "T78274A",
+      "site": "T78274",
+      "target": 87.629576,
+      "prediction": 79.47273254394531,
+      "squared_error": 66.53409516658218
+    },
+    {
+      "sector": "T78274B",
+      "site": "T78274",
+      "target": 26.25002561,
+      "prediction": 17.812259674072266,
+      "squared_error": 71.19589398950247
+    },
+    {
+      "sector": "T78274C",
+      "site": "T78274",
+      "target": 41.68473076,
+      "prediction": 30.335124969482422,
+      "squared_error": 128.81355160015016
+    },
+    {
+      "sector": "T78279A",
+      "site": "T78279",
+      "target": 5.007568221,
+      "prediction": 4.0991973876953125,
+      "squared_error": 0.8251375707986517
+    },
+    {
+      "sector": "T78279B",
+      "site": "T78279",
+      "target": 2.469312485,
+      "prediction": 2.203709125518799,
+      "squared_error": 0.07054514456770024
+    },
+    {
+      "sector": "T78279C",
+      "site": "T78279",
+      "target": 3.595369105,
+      "prediction": 2.2400529384613037,
+      "squared_error": 1.8368819112811474
+    },
+    {
+      "sector": "T78280A",
+      "site": "T78280",
+      "target": 10.45768825,
+      "prediction": 7.660069465637207,
+      "squared_error": 7.826670862619554
+    },
+    {
+      "sector": "T78280B",
+      "site": "T78280",
+      "target": 15.95683312,
+      "prediction": 17.96491241455078,
+      "squared_error": 4.032382453203561
+    },
+    {
+      "sector": "T78280C",
+      "site": "T78280",
+      "target": 27.64677718,
+      "prediction": 17.253108978271484,
+      "squared_error": 108.0283386876225
+    }
+  ]
+}

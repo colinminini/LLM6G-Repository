@@ -1,0 +1,44 @@
+{
+  "model_id": "amazon/chronos-bolt-small",
+  "timestamp_utc": "2025-12-02T18:48:39.292646+00:00",
+  "num_series": 5,
+  "num_samples": 32,
+  "rmse": 5.538238803298744,
+  "per_series": [
+    {
+      "sector": "T70744A",
+      "site": "T70744A",
+      "target": 0.0,
+      "prediction": 0.3656449317932129,
+      "squared_error": 0.1336962161460633
+    },
+    {
+      "sector": "T77125C",
+      "site": "T77125C",
+      "target": 0.0,
+      "prediction": 0.382565975189209,
+      "squared_error": 0.14635672537247046
+    },
+    {
+      "sector": "T78258B",
+      "site": "T78258B",
+      "target": 9.41030984708706,
+      "prediction": 2.3759684562683105,
+      "squared_error": 49.48195880258586
+    },
+    {
+      "sector": "T78271C",
+      "site": "T78271C",
+      "target": 14.661093619278745,
+      "prediction": 5.055527687072754,
+      "squared_error": 92.26689687795634
+    },
+    {
+      "sector": "T78273C",
+      "site": "T78273C",
+      "target": 0.0,
+      "prediction": 3.36623477935791,
+      "squared_error": 11.331536589758798
+    }
+  ]
+}

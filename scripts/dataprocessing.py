@@ -43,13 +43,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-path",
         type=Path,
-        default=Path("data/histo_trafic_instant_short.csv"),
+        default=Path("data/histo_trafic_original.csv"),
         help="Path to the raw CSV file.",
     )
     parser.add_argument(
         "--output-path",
         type=Path,
-        default=Path("data/processed_trafic_instant_short.jsonl"),
+        default=Path("data/processed_trafic_original.jsonl"),
         help="Destination JSONL path (directories are created as needed).",
     )
     parser.add_argument(

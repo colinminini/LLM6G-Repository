@@ -9,5 +9,5 @@ pyarrow>=14.0.1
 # Core deep learning stacks
 torch>=2.3
 
-# Time-series forecasting (bolt/t5 support requires >=1.0.0)
+# Time-series forecasting
 chronos-forecasting>=1.0.0

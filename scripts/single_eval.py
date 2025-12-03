@@ -209,7 +209,7 @@ def main() -> None:
     results = run_evaluation(pipeline, dataset, args.num_samples)
 
     slug = args.model_id.replace("/", "__").replace(":", "_")
-    output_path = args.output_path or Path("results") / f"eval_{slug}.json"
+    output_path = args.output_path or Path("results") / "evals" / f"eval_{slug}.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = {

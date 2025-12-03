@@ -1,0 +1,611 @@
+{
+  "model_id": "amazon/chronos-bolt-tiny",
+  "timestamp_utc": "2025-12-03T08:49:32.589297+00:00",
+  "num_series": 86,
+  "num_samples": 32,
+  "rmse": 2.114214016629422,
+  "per_series": [
+    {
+      "sector": "T36870A",
+      "site": "T36870A",
+      "target": 0.0,
+      "prediction": 0.05117833614349365,
+      "squared_error": 0.0026192220904164287
+    },
+    {
+      "sector": "T36870B",
+      "site": "T36870B",
+      "target": 0.0,
+      "prediction": 0.020456463098526,
+      "squared_error": 0.000418466882501356
+    },
+    {
+      "sector": "T70721A",
+      "site": "T70721A",
+      "target": 0.0,
+      "prediction": 0.12524579465389252,
+      "squared_error": 0.01568650907848501
+    },
+    {
+      "sector": "T70721B",
+      "site": "T70721B",
+      "target": 0.4700250632084128,
+      "prediction": 0.3124692440032959,
+      "squared_error": 0.024823836165395487
+    },
+    {
+      "sector": "T70721C",
+      "site": "T70721C",
+      "target": 0.0622327913431134,
+      "prediction": 0.0488574244081974,
+      "squared_error": 0.0001789004406436442
+    },
+    {
+      "sector": "T70722A",
+      "site": "T70722A",
+      "target": 0.0,
+      "prediction": 0.2769005000591278,
+      "squared_error": 0.07667388693299504
+    },
+    {
+      "sector": "T70722B",
+      "site": "T70722B",
+      "target": 4.13349141436892,
+      "prediction": 1.7028305530548096,
+      "squared_error": 5.908112222724252
+    },
+    {
+      "sector": "T70722C",
+      "site": "T70722C",
+      "target": 0.0,
+      "prediction": 0.8449742794036865,
+      "squared_error": 0.7139815328537793
+    },
+    {
+      "sector": "T70724A",
+      "site": "T70724A",
+      "target": 5.55922030956506,
+      "prediction": 1.7296541929244995,
+      "squared_error": 14.66557664172146
+    },
+    {
+      "sector": "T70724B",
+      "site": "T70724B",
+      "target": 0.0,
+      "prediction": 0.05105400085449219,
+      "squared_error": 0.002606511003250489
+    },
+    {
+      "sector": "T70724C",
+      "site": "T70724C",
+      "target": 0.0,
+      "prediction": 0.24365234375,
+      "squared_error": 0.059366464614868164
+    },
+    {
+      "sector": "T70725A",
+      "site": "T70725A",
+      "target": 0.0,
+      "prediction": 0.8082706928253174,
+      "squared_error": 0.6533015128803186
+    },
+    {
+      "sector": "T70725B",
+      "site": "T70725B",
+      "target": 1.9885257625876036,
+      "prediction": 2.6428282260894775,
+      "squared_error": 0.4281117137446211
+    },
+    {
+      "sector": "T70725C",
+      "site": "T70725C",
+      "target": 4.233945316175002,
+      "prediction": 2.103097915649414,
+      "squared_error": 4.540510644326655
+    },
+    {
+      "sector": "T70730A",
+      "site": "T70730A",
+      "target": 0.6186159773629127,
+      "prediction": 0.6695157289505005,
+      "squared_error": 0.002590784711678142
+    },
+    {
+      "sector": "T70730B",
+      "site": "T70730B",
+      "target": 0.877383292565834,
+      "prediction": 0.840486466884613,
+      "squared_error": 0.0013613757453504087
+    },
+    {
+      "sector": "T70730C",
+      "site": "T70730C",
+      "target": 0.1110671042566818,
+      "prediction": 0.10225023329257965,
+      "squared_error": 7.773721359762757e-05
+    },
+    {
+      "sector": "T70731A",
+      "site": "T70731A",
+      "target": 0.0,
+      "prediction": 0.1937595158815384,
+      "squared_error": 0.03754274999464813
+    },
+    {
+      "sector": "T70731B",
+      "site": "T70731B",
+      "target": 0.0,
+      "prediction": 0.8944262266159058,
+      "squared_error": 0.7999982748583676
+    },
+    {
+      "sector": "T70731C",
+      "site": "T70731C",
+      "target": 0.0725170225741685,
+      "prediction": 0.7436280846595764,
+      "squared_error": 0.4503900576534043
+    },
+    {
+      "sector": "T70735A",
+      "site": "T70735A",
+      "target": 0.2686166566954734,
+      "prediction": 0.2749917507171631,
+      "squared_error": 4.064182378538344e-05
+    },
+    {
+      "sector": "T70735B",
+      "site": "T70735B",
+      "target": 1.5100695747289612,
+      "prediction": 1.2908599376678467,
+      "squared_error": 0.04805286498046555
+    },
+    {
+      "sector": "T70735C",
+      "site": "T70735C",
+      "target": 0.0,
+      "prediction": 0.8641871213912964,
+      "squared_error": 0.7468193807785752
+    },
+    {
+      "sector": "T70736A",
+      "site": "T70736A",
+      "target": 0.0,
+      "prediction": 0.3998987674713135,
+      "squared_error": 0.15991902422507565
+    },
+    {
+      "sector": "T70736B",
+      "site": "T70736B",
+      "target": 0.0,
+      "prediction": 0.9288249015808105,
+      "squared_error": 0.8627156977966024
+    },
+    {
+      "sector": "T70736C",
+      "site": "T70736C",
+      "target": 3.875564121064368,
+      "prediction": 2.8254196643829346,
+      "squared_error": 1.102803379898743
+    },
+    {
+      "sector": "T70737A",
+      "site": "T70737A",
+      "target": 1.0768773634726103,
+      "prediction": 1.5871611833572388,
+      "squared_error": 0.2603895768360479
+    },
+    {
+      "sector": "T70737B",
+      "site": "T70737B",
+      "target": 1.12267067078781,
+      "prediction": 0.9925594329833984,
+      "squared_error": 0.01692893420299614
+    },
+    {
+      "sector": "T70737C",
+      "site": "T70737C",
+      "target": 1.8856582354170348,
+      "prediction": 0.6567308902740479,
+      "squared_error": 1.5102624196401901
+    },
+    {
+      "sector": "T70738A",
+      "site": "T70738A",
+      "target": 0.0,
+      "prediction": 0.1379498839378357,
+      "squared_error": 0.019030170478462338
+    },
+    {
+      "sector": "T70738B",
+      "site": "T70738B",
+      "target": 0.737043866455291,
+      "prediction": 0.736614465713501,
+      "squared_error": 1.843849970497911e-07
+    },
+    {
+      "sector": "T70738C",
+      "site": "T70738C",
+      "target": 0.4574520999276791,
+      "prediction": 0.7046868801116943,
+      "squared_error": 0.06112503653263833
+    },
+    {
+      "sector": "T70743A",
+      "site": "T70743A",
+      "target": 0.0,
+      "prediction": 0.04208187758922577,
+      "squared_error": 0.001770884421434582
+    },
+    {
+      "sector": "T70743B",
+      "site": "T70743B",
+      "target": 0.1437122339896218,
+      "prediction": 0.13835647702217102,
+      "squared_error": 2.8684132694397525e-05
+    },
+    {
+      "sector": "T70743C",
+      "site": "T70743C",
+      "target": 0.5562368632546563,
+      "prediction": 0.24060162901878357,
+      "squared_error": 0.09962560109113422
+    },
+    {
+      "sector": "T70744A",
+      "site": "T70744A",
+      "target": 0.0,
+      "prediction": 0.9073042869567871,
+      "squared_error": 0.8232010691301639
+    },
+    {
+      "sector": "T70744B",
+      "site": "T70744B",
+      "target": 4.037138042516431,
+      "prediction": 1.479292392730713,
+      "squared_error": 6.542574368127722
+    },
+    {
+      "sector": "T70744C",
+      "site": "T70744C",
+      "target": 0.0,
+      "prediction": 0.10979270935058594,
+      "squared_error": 0.01205443902654224
+    },
+    {
+      "sector": "T70745A",
+      "site": "T70745A",
+      "target": 7.057345487288344,
+      "prediction": 0.5365270376205444,
+      "squared_error": 42.52107325352796
+    },
+    {
+      "sector": "T70745B",
+      "site": "T70745B",
+      "target": 2.4964068678076243,
+      "prediction": 2.2241623401641846,
+      "squared_error": 0.07411708283179963
+    },
+    {
+      "sector": "T70745C",
+      "site": "T70745C",
+      "target": 0.0,
+      "prediction": 0.4072422683238983,
+      "squared_error": 0.165846265109594
+    },
+    {
+      "sector": "T70747A",
+      "site": "T70747A",
+      "target": 0.0,
+      "prediction": 0.39314788579940796,
+      "squared_error": 0.15456526010854432
+    },
+    {
+      "sector": "T70747B",
+      "site": "T70747B",
+      "target": 0.1803998384578651,
+      "prediction": 0.01571333408355713,
+      "squared_error": 0.027121644723028963
+    },
+    {
+      "sector": "T70747C",
+      "site": "T70747C",
+      "target": 0.0,
+      "prediction": 1.8583848476409912,
+      "squared_error": 3.45359424194163
+    },
+    {
+      "sector": "T76995A",
+      "site": "T76995A",
+      "target": 0.5447934810944468,
+      "prediction": 0.4202415347099304,
+      "squared_error": 0.015513187348171444
+    },
+    {
+      "sector": "T76995B",
+      "site": "T76995B",
+      "target": 0.0,
+      "prediction": 0.01779267191886902,
+      "squared_error": 0.0003165791740125101
+    },
+    {
+      "sector": "T76995C",
+      "site": "T76995C",
+      "target": 1.4708689070690502,
+      "prediction": 1.0357089042663574,
+      "squared_error": 0.18936422803923955
+    },
+    {
+      "sector": "T77125A",
+      "site": "T77125A",
+      "target": 0.0,
+      "prediction": 0.012621164321899414,
+      "squared_error": 0.0001592937888403867
+    },
+    {
+      "sector": "T77125B",
+      "site": "T77125B",
+      "target": 1.3006239166260378,
+      "prediction": 0.07214593887329102,
+      "squared_error": 1.5091581418234783
+    },
+    {
+      "sector": "T77125C",
+      "site": "T77125C",
+      "target": 7.269553623441919,
+      "prediction": 1.0089831352233887,
+      "squared_error": 39.1947428379528
+    },
+    {
+      "sector": "T78256A",
+      "site": "T78256A",
+      "target": 1.4033126219504897,
+      "prediction": 1.2846580743789673,
+      "squared_error": 0.01407890165940267
+    },
+    {
+      "sector": "T78256B",
+      "site": "T78256B",
+      "target": 0.0,
+      "prediction": 0.07557332515716553,
+      "squared_error": 0.005711327475310668
+    },
+    {
+      "sector": "T78256C",
+      "site": "T78256C",
+      "target": 1.2510108032373777,
+      "prediction": 1.6508924961090088,
+      "squared_error": 0.15990536829388152
+    },
+    {
+      "sector": "T78258A",
+      "site": "T78258A",
+      "target": 0.0,
+      "prediction": 0.49720096588134766,
+      "squared_error": 0.24720880047334504
+    },
+    {
+      "sector": "T78258B",
+      "site": "T78258B",
+      "target": 13.14100220809454,
+      "prediction": 3.6947929859161377,
+      "squared_error": 89.23086866916829
+    },
+    {
+      "sector": "T78258C",
+      "site": "T78258C",
+      "target": 0.8915567587112971,
+      "prediction": 0.9112014770507812,
+      "squared_error": 0.00038591495863766345
+    },
+    {
+      "sector": "T78259A",
+      "site": "T78259A",
+      "target": 0.3311547848096406,
+      "prediction": 0.3413901925086975,
+      "squared_error": 0.00010476357076591321
+    },
+    {
+      "sector": "T78259B",
+      "site": "T78259B",
+      "target": 0.0,
+      "prediction": 0.853265106678009,
+      "squared_error": 0.7280613422742341
+    },
+    {
+      "sector": "T78259C",
+      "site": "T78259C",
+      "target": 0.0,
+      "prediction": 0.04721498489379883,
+      "squared_error": 0.0022292547985216515
+    },
+    {
+      "sector": "T78262A",
+      "site": "T78262A",
+      "target": 10.379505258298884,
+      "prediction": 1.7589269876480103,
+      "squared_error": 74.31436972041801
+    },
+    {
+      "sector": "T78262B",
+      "site": "T78262B",
+      "target": 4.576409353169164,
+      "prediction": 0.1249690055847168,
+      "squared_error": 19.815321168102745
+    },
+    {
+      "sector": "T78262C",
+      "site": "T78262C",
+      "target": 4.584484323358087,
+      "prediction": 1.2417494058609009,
+      "squared_error": 11.173876728654918
+    },
+    {
+      "sector": "T78264A",
+      "site": "T78264A",
+      "target": 0.0,
+      "prediction": 0.022761434316635132,
+      "squared_error": 0.0005180828921504954
+    },
+    {
+      "sector": "T78264B",
+      "site": "T78264B",
+      "target": 0.0,
+      "prediction": 0.023590147495269775,
+      "squared_error": 0.0005564950588485829
+    },
+    {
+      "sector": "T78264C",
+      "site": "T78264C",
+      "target": 0.0,
+      "prediction": 0.07935869693756104,
+      "squared_error": 0.006297802779627659
+    },
+    {
+      "sector": "T78269A",
+      "site": "T78269A",
+      "target": 1.136380186086241,
+      "prediction": 1.1423571109771729,
+      "squared_error": 3.572363115184038e-05
+    },
+    {
+      "sector": "T78269B",
+      "site": "T78269B",
+      "target": 1.731746832767778,
+      "prediction": 1.655090093612671,
+      "squared_error": 0.005876255657894142
+    },
+    {
+      "sector": "T78269C",
+      "site": "T78269C",
+      "target": 1.127636135014598,
+      "prediction": 0.5517992377281189,
+      "squared_error": 0.3315881322765191
+    },
+    {
+      "sector": "T78270A",
+      "site": "T78270A",
+      "target": 0.2691537757069191,
+      "prediction": 0.2776365876197815,
+      "squared_error": 7.195809794899984e-05
+    },
+    {
+      "sector": "T78270B",
+      "site": "T78270B",
+      "target": 0.0,
+      "prediction": 0.1764926314353943,
+      "squared_error": 0.031149648950989928
+    },
+    {
+      "sector": "T78270C",
+      "site": "T78270C",
+      "target": 0.0,
+      "prediction": 0.6426184177398682,
+      "squared_error": 0.4129584308184917
+    },
+    {
+      "sector": "T78271A",
+      "site": "T78271A",
+      "target": 0.9532405567500646,
+      "prediction": 0.9605194330215454,
+      "squared_error": 5.298203977552663e-05
+    },
+    {
+      "sector": "T78271B",
+      "site": "T78271B",
+      "target": 0.0,
+      "prediction": 0.2825065553188324,
+      "squared_error": 0.07980995379811251
+    },
+    {
+      "sector": "T78271C",
+      "site": "T78271C",
+      "target": 1.4188623949358428,
+      "prediction": 4.818911552429199,
+      "squared_error": 11.560334273371282
+    },
+    {
+      "sector": "T78273A",
+      "site": "T78273A",
+      "target": 0.0,
+      "prediction": 0.05541670322418213,
+      "squared_error": 0.003071010996237078
+    },
+    {
+      "sector": "T78273B",
+      "site": "T78273B",
+      "target": 2.8129510451792683,
+      "prediction": 0.5794637203216553,
+      "squared_error": 4.988465630299617
+    },
+    {
+      "sector": "T78273C",
+      "site": "T78273C",
+      "target": 0.0,
+      "prediction": 3.246485948562622,
+      "squared_error": 10.539671014214548
+    },
+    {
+      "sector": "T78274A",
+      "site": "T78274A",
+      "target": 7.615729136040326,
+      "prediction": 2.0850882530212402,
+      "squared_error": 30.58798857692213
+    },
+    {
+      "sector": "T78274B",
+      "site": "T78274B",
+      "target": 0.0,
+      "prediction": 0.0035242438316345215,
+      "squared_error": 1.2420294584813973e-05
+    },
+    {
+      "sector": "T78274C",
+      "site": "T78274C",
+      "target": 1.6683369379401258,
+      "prediction": 1.4229481220245361,
+      "squared_error": 0.060215670976455166
+    },
+    {
+      "sector": "T78279A",
+      "site": "T78279A",
+      "target": 0.4281899434647975,
+      "prediction": 0.39153963327407837,
+      "squared_error": 0.0013432452370759304
+    },
+    {
+      "sector": "T78279B",
+      "site": "T78279B",
+      "target": 0.0892308855047149,
+      "prediction": 0.1056288331747055,
+      "squared_error": 0.00026889268778775016
+    },
+    {
+      "sector": "T78279C",
+      "site": "T78279C",
+      "target": 0.0,
+      "prediction": 0.02377980947494507,
+      "squared_error": 0.0005654793386646872
+    },
+    {
+      "sector": "T78280A",
+      "site": "T78280A",
+      "target": 0.9690967897278556,
+      "prediction": 0.021587416529655457,
+      "squared_error": 0.8977740122984461
+    },
+    {
+      "sector": "T78280B",
+      "site": "T78280B",
+      "target": 0.0,
+      "prediction": 0.09226787090301514,
+      "squared_error": 0.008513360000975467
+    },
+    {
+      "sector": "T78280C",
+      "site": "T78280C",
+      "target": 1.4113544622285985,
+      "prediction": 0.29539135098457336,
+      "squared_error": 1.2453736656574443
+    }
+  ]
+}

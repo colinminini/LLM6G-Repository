@@ -1,0 +1,11 @@
+model_id,rmse,parameters
+amazon/chronos-2,2.2919931940896254,120M
+amazon/chronos-bolt-tiny,2.114214016629422,9M
+amazon/chronos-bolt-mini,2.1416709407189676,21M
+amazon/chronos-bolt-small,2.2220614735735675,48M
+amazon/chronos-bolt-base,2.1928934200018815,205M
+amazon/chronos-t5-tiny,2.490804004873767,8M
+amazon/chronos-t5-mini,2.527757325314315,20M
+amazon/chronos-t5-small,2.4481019440210927,46M
+amazon/chronos-t5-base,2.503634835368739,200M
+amazon/chronos-t5-large,2.52488642380257,710M

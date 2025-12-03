@@ -74,7 +74,7 @@ def evaluate_model(model_id: str, num_samples: int = 32, dataset: str = "instant
     data_path = ensure_processed_data(dataset_key)
     slug = model_id.replace("/", "__")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = RESULTS_DIR / f"eval_{slug}_{dataset_key}.json"
+    out_path = RESULTS_DIR / "evals" / f"eval_{slug}_{dataset_key}.json"
     cmd = [
         sys.executable,
         "scripts/single_eval.py",

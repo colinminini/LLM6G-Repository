@@ -68,7 +68,13 @@ def ensure_processed_data(dataset: str = "instant") -> pathlib.Path:
     return data_path
 
 
-def evaluate_model(model_id: str, num_samples: int = 32, dataset: str = "instant"):
+def evaluate_model(
+    model_id: str,
+    num_samples: int = 32,
+    dataset: str = "instant",
+    context_length: int = 128,
+    rmse_samples: int = 10,
+):
     """Run the evaluation script for a single model and return the loaded results."""
     dataset_key, cfg = normalize_dataset(dataset)
     data_path = ensure_processed_data(dataset_key)
@@ -84,6 +90,10 @@ def evaluate_model(model_id: str, num_samples: int = 32, dataset: str = "instant
         str(data_path),
         "--num-samples",
         str(num_samples),
+        "--context-length",
+        str(context_length),
+        "--rmse-samples",
+        str(rmse_samples),
         "--device",
         str(device),
         "--output-path",

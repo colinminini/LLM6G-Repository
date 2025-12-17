@@ -46,6 +46,18 @@ def parse_args() -> argparse.Namespace:
         help="Number of forecast samples to draw before averaging.",
     )
     parser.add_argument(
+        "--context-length",
+        type=int,
+        default=128,
+        help="Number of past points to feed the model (uniform across models).",
+    )
+    parser.add_argument(
+        "--rmse-samples",
+        type=int,
+        default=10,
+        help="How many random 1-step predictions to score per sector before averaging.",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cpu",
@@ -162,51 +174,103 @@ def forecast_to_point(pipeline: Any, forecast: Any) -> float:
 
 
 def run_evaluation(
-    pipeline: Any, dataset: List[Dict[str, Any]], num_samples: int
+    pipeline: Any,
+    dataset: List[Dict[str, Any]],
+    num_samples: int,
+    context_length: int,
+    rmse_samples: int,
+    rng: np.random.Generator,
 ) -> Dict[str, Any]:
     squared_errors: List[float] = []
+    squared_ratio_errors: List[float] = []
     per_series: List[Dict[str, Any]] = []
+    skipped_sectors: List[str] = []
 
     with torch.no_grad():
         for entry in dataset:
-            context = torch.tensor(entry["context"], dtype=torch.float32)
-            target = float(entry["target"])
+            # Reconstruct full history (context plus final target).
+            series = list(entry["context"]) + [float(entry["target"])]
+            max_start = len(series) - context_length
+            if max_start <= 0:
+                skipped_sectors.append(entry["sector"])
+                continue
 
-            if pipeline.__class__.__name__ == "Chronos2Pipeline":
-                forecast = pipeline.predict(inputs=[context], prediction_length=1)
-            elif hasattr(pipeline, "quantiles"):
-                forecast = pipeline.predict(inputs=context, prediction_length=1)
-            else:
-                forecast = pipeline.predict(
-                    inputs=context,
-                    prediction_length=1,
-                    num_samples=num_samples,
+            replace = max_start < rmse_samples
+            start_indices = rng.choice(max_start, size=rmse_samples, replace=replace)
+
+            for start_idx in start_indices:
+                start = int(start_idx)
+                ctx_values = series[start : start + context_length]
+                target = float(series[start + context_length])
+                context = torch.tensor(ctx_values, dtype=torch.float32)
+
+                if pipeline.__class__.__name__ == "Chronos2Pipeline":
+                    forecast = pipeline.predict(inputs=[context], prediction_length=1)
+                elif hasattr(pipeline, "quantiles"):
+                    forecast = pipeline.predict(inputs=context, prediction_length=1)
+                else:
+                    forecast = pipeline.predict(
+                        inputs=context,
+                        prediction_length=1,
+                        num_samples=num_samples,
+                    )
+
+                prediction = forecast_to_point(pipeline, forecast)
+                # RMSE uses the raw absolute error (no scaling).
+                squared_error = (prediction - target) ** 2
+                # Scale only for RMSE%/ratio to avoid exploding percentages on near-zero values.
+                scale = max(abs(target), abs(prediction), 1.0)
+                percentage_error = (prediction - target) / scale
+                squared_ratio = percentage_error**2
+                squared_errors.append(squared_error)
+                squared_ratio_errors.append(squared_ratio)
+                per_series.append(
+                    {
+                        "sector": entry["sector"],
+                        "site": entry.get("site"),
+                        "sample_start_index": start,
+                        "target": target,
+                        "prediction": prediction,
+                        "squared_error": squared_error,
+                        "percentage_error": percentage_error * 100.0,
+                        "squared_percentage_error": (percentage_error * 100.0) ** 2,
+                    }
                 )
-            prediction = forecast_to_point(pipeline, forecast)
-            error = (prediction - target) ** 2
-            squared_errors.append(error)
-            per_series.append(
-                {
-                    "sector": entry["sector"],
-                    "site": entry.get("site"),
-                    "target": target,
-                    "prediction": prediction,
-                    "squared_error": error,
-                }
-            )
+
+    if not squared_ratio_errors:
+        raise RuntimeError(
+            "No RMSE samples were generated. "
+            f"Skipped sectors (not enough history for context {context_length}): {skipped_sectors}"
+        )
 
     rmse = math.sqrt(sum(squared_errors) / len(squared_errors))
-    return {"rmse": rmse, "per_series": per_series}
+    rmse_ratio = math.sqrt(sum(squared_ratio_errors) / len(squared_ratio_errors))
+    rmse_percentage = rmse_ratio * 100.0
+    return {
+        "rmse": rmse,
+        "rmse_percentage": rmse_percentage,
+        "rmse_ratio": rmse_ratio,
+        "per_series": per_series,
+        "skipped_sectors": skipped_sectors,
+    }
 
 
 def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
+    rng = np.random.default_rng(args.seed)
     device = torch.device(args.device)
 
     dataset = load_dataset(args.data_path)
     pipeline = init_pipeline(args.model_id, device)
-    results = run_evaluation(pipeline, dataset, args.num_samples)
+    results = run_evaluation(
+        pipeline,
+        dataset,
+        num_samples=args.num_samples,
+        context_length=args.context_length,
+        rmse_samples=args.rmse_samples,
+        rng=rng,
+    )
 
     slug = args.model_id.replace("/", "__").replace(":", "_")
     output_path = args.output_path or Path("results") / "evals" / f"eval_{slug}.json"
@@ -217,16 +281,27 @@ def main() -> None:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "num_series": len(dataset),
         "num_samples": args.num_samples,
+        "context_length": args.context_length,
+        "rmse_samples": args.rmse_samples,
         "rmse": results["rmse"],
+        "rmse_percentage": results["rmse_percentage"],
+        "rmse_ratio": results["rmse_ratio"],
+        "skipped_sectors": results["skipped_sectors"],
         "per_series": results["per_series"],
     }
     output_path.write_text(json.dumps(payload, indent=2))
 
     print(
-        f"Model {args.model_id} | RMSE={results['rmse']:.4f} "
-        f"across {len(dataset)} sectors."
+        f"Model {args.model_id} | RMSE%={results['rmse_percentage']:.4f}% "
+        f"(RMSE={results['rmse']:.4f}) across {len(dataset)} sectors "
+        f"({args.rmse_samples} samples/sector, context={args.context_length})."
     )
     print(f"Saved detailed results to {output_path}")
+    if results["skipped_sectors"]:
+        print(
+            f"Skipped {len(results['skipped_sectors'])} sectors "
+            f"with insufficient history: {sorted(results['skipped_sectors'])}"
+        )
 
 
 if __name__ == "__main__":

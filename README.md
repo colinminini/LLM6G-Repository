@@ -61,6 +61,8 @@ The continuous input space is discretized into tokens, called bins.
 - We define 'scripts/train_run.py' for the training run of the models
 - For training run: train_run.py --model all
 - At the same time, to check the logs run: tensorboard --logdir results/logs
+- Instant Dataset is too computationally heavy for every model. We couldn't compute the metrics.
+- Original dataset results are in 'notebook.ipynb': lstm is the best!  
 
 ## References
 - [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`sources/Chronos.pdf`)

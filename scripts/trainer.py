@@ -102,7 +102,7 @@ class Trainer:
                 else batch_idx - 1
             )
             writer.add_scalar(f"loss/{phase}_batch", loss.item(), step)
-            if batch_idx % 1000 == 0:
+            if batch_idx % 5000 == 0:
                 print(
                     f"{phase.capitalize()} epoch {epoch} batch {batch_idx} "
                     f"loss={loss.item():.6f}"
@@ -129,6 +129,9 @@ class Trainer:
             "val_loss": [],
             "val_rmse": [],
         }
+        if test_loader is not None:
+            history["test_loss"] = []
+            history["test_rmse"] = []
         best_val = float("inf")
         num_increase = 0
         writer = SummaryWriter(log_dir=self.config.log_dir / self.config.run_name)
@@ -143,7 +146,6 @@ class Trainer:
                 val_loss, val_rmse = self._run_epoch(
                     val_loader, train=False, epoch=epoch, phase="val", writer=writer
                 )
-                epoch_time = time.perf_counter() - epoch_start
                 history["train_loss"].append(train_loss)
                 history["train_rmse"].append(train_rmse)
                 history["val_loss"].append(val_loss)
@@ -152,10 +154,21 @@ class Trainer:
                 writer.add_scalar("loss/val", val_loss, epoch)
                 writer.add_scalar("rmse/train", train_rmse, epoch)
                 writer.add_scalar("rmse/val", val_rmse, epoch)
-                writer.add_scalar("metrics/epoch_time_sec", epoch_time, epoch)
                 writer.add_scalar("metrics/best_val", best_val, epoch)
                 writer.add_scalar("metrics/patience_count", num_increase, epoch)
                 writer.add_scalar("metrics/learning_rate", self.optimizer.param_groups[0]["lr"], epoch)
+
+                if test_loader is not None:
+                    test_loss, test_rmse = self.evaluate(
+                        test_loader, epoch=epoch, writer=writer
+                    )
+                    history["test_loss"].append(test_loss)
+                    history["test_rmse"].append(test_rmse)
+                    writer.add_scalar("loss/test", test_loss, epoch)
+                    writer.add_scalar("rmse/test", test_rmse, epoch)
+
+                epoch_time = time.perf_counter() - epoch_start
+                writer.add_scalar("metrics/epoch_time_sec", epoch_time, epoch)
 
                 if val_loss < best_val:
                     best_val = val_loss
@@ -166,33 +179,28 @@ class Trainer:
                     if num_increase >= self.config.patience:
                         print(
                             "Early stopping at epoch "
-                            f"{epoch}: val_loss={val_loss:.6f}, best_val={best_val:.6f}."
+                            f"{epoch}: train_rmse={train_rmse:.6f}, val_rmse={val_rmse:.6f}, test_rmse={test_rmse:.6f}" # pyright: ignore[reportPossiblyUnboundVariable]
                         )
                         break
 
-                print(
+                message = (
                     "Epoch "
                     f"{epoch}/{self.config.max_epochs} "
                     f"- train_loss={train_loss:.6f} "
                     f"- train_rmse={train_rmse:.6f} "
                     f"- val_loss={val_loss:.6f} "
                     f"- val_rmse={val_rmse:.6f} "
+                )
+                if test_loader is not None:
+                    message += f"- test_rmse={test_rmse:.6f} " # pyright: ignore[reportPossiblyUnboundVariable]
+                message += (
                     f"- best_val={best_val:.6f} "
                     f"- patience={num_increase}/{self.config.patience}"
                 )
-
-            if test_loader is not None:
-                test_loss, test_rmse = self.evaluate(
-                    test_loader, epoch=len(history["train_loss"]), writer=writer
-                )
-                history["test_loss"] = [test_loss]
-                history["test_rmse"] = [test_rmse]
-                writer.add_scalar("loss/test", test_loss, len(history["train_loss"]))
-                writer.add_scalar("rmse/test", test_rmse, len(history["train_loss"]))
+                print(message)
         finally:
             writer.close()
 
-        self._save_config(history, best_val, best_path)
         return history
 
     def evaluate(
@@ -204,20 +212,3 @@ class Trainer:
     def _save_weights(self, out_path: Path) -> None:
         self.config.save_dir.mkdir(parents=True, exist_ok=True)
         torch.save(self.model.state_dict(), out_path)
-
-    def _save_config(
-        self, history: Dict[str, List[float]], best_val: float, best_path: Path
-    ) -> None:
-        self.config.save_dir.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "trainer": asdict(self.config),
-            "model": self.model.__class__.__name__,
-            "model_config": self.model_config,
-            "best_val_loss": best_val,
-            "best_checkpoint": str(best_path),
-            "epochs_ran": len(history["train_loss"]),
-            "history": history,
-        }
-        out_path = self.config.save_dir / f"{self.config.run_name}_config.json"
-        with out_path.open("w", encoding="utf-8") as fout:
-            json.dump(payload, fout, indent=2)

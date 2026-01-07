@@ -1,8 +1,11 @@
 .venv
 __pycache__/
-data/histo_trafic_instant.csv
-data/processed_trafic_instant.jsonl
+data/histo/histo_trafic_instant.csv
+data/processed/processed_trafic_instant.jsonl
 Notes_Projet_LLM6G.txt
 README_copy.md
 *.pyc
 .DS_Store
+.ipynb_checkpoints
+data/datasets/
+data/data_instant.csv

@@ -49,6 +49,19 @@ The continuous input space is discretized into tokens, called bins.
 - The RMSE of the augmented dataset being three times lower than the one of the original dataset mainly is because of the amount of 0 scalar target values being higher, and those values being easier for the models to predict (lower RMSE for these targets). 
 - Check `/results/evals/` for predictions and targets.
 
+## Inference Comparison with LSTM Baseline (08/01 Meeting)
+
+- We now want to compare inference capabilities of 0-shot prediction models with an LSTM trained on the dataset itself.
+- Cleaning: First thing is to create a dataset for training/validation/testing. The data yields from the histogram of traffic_mbps of the 86 antenna sectors. One challenge is that some of the values of traffic are missing for some antennas. We should reformat the histogram to a table-like format for which one feature is the timestamp and the rest 86 features are the 86 antenna sectors. 
+- To create this cleaned data we select the largest, continuous in time, dataset included in the histogram, for which none of the sectors has any missing values. The script 'utils/build_dataset.py' is used for this. The total number of points in the cleaned dataset with ZERO NaN values is now 49.6k compared to an average (over the sectors) of 55k points beforehand. For the original data it is now 129 points compared to the around 300 points beforehand. 
+- Dataset: We split the data chronologically to avoid time-series data-leakage. We split the data into 3 datasets: Training (80%), Validation (10%), Testing (10%)
+- We define models architecture in 'scripts/models.py'
+- We define the Pytorch dataloaders in 'scripts/loader.py' and the Dataset Class in 'scripts/dataset.py'
+- We define the Trainer Class in 'scripts/trainer.py'
+- We define 'scripts/train_run.py' for the training run of the models
+- For training run: train_run.py --model all
+- At the same time, to check the logs run: tensorboard --logdir results/logs
+
 ## References
 - [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`sources/Chronos.pdf`)
 - [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`sources/KTH.pdf`)

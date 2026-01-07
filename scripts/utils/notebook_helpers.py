@@ -18,17 +18,17 @@ DatasetConfig = Dict[str, pathlib.Path]
 
 DATASETS: Dict[str, DatasetConfig] = {
     # Keep key spelling aligned with the datasets mentioned in the notebook.
-    "orignal": {
-        "input": pathlib.Path("data/histo_trafic_origial.csv"),
-        "processed": pathlib.Path("data/processed_trafic_original.jsonl"),
+    "original": {
+        "input": pathlib.Path("data/histo/histo_trafic_original.csv"),
+        "processed": pathlib.Path("data/processed/processed_trafic_original.jsonl"),
     },
     "instant": {
-        "input": pathlib.Path("data/histo_trafic_instant.csv"),
-        "processed": pathlib.Path("data/processed_trafic_instant.jsonl"),
+        "input": pathlib.Path("data/histo/histo_trafic_instant.csv"),
+        "processed": pathlib.Path("data/processed/processed_trafic_instant.jsonl"),
     },
-    "intant_short": {
-        "input": pathlib.Path("data/histo_trafic_instant_short.csv"),
-        "processed": pathlib.Path("data/processed_trafic_instant_short.jsonl"),
+    "instant_short": {
+        "input": pathlib.Path("data/histo/histo_trafic_instant_short.csv"),
+        "processed": pathlib.Path("data/processed/processed_trafic_instant_short.jsonl"),
     },
 }
 
@@ -57,7 +57,7 @@ def ensure_processed_data(dataset: str = "instant") -> pathlib.Path:
         return data_path
     cmd = [
         sys.executable,
-        "scripts/dataprocessing.py",
+        "scripts/utils/dataprocessing.py",
         "--input-path",
         str(cfg["input"]),
         "--output-path",
@@ -83,7 +83,7 @@ def evaluate_model(
     out_path = RESULTS_DIR / "evals" / f"eval_{slug}_{dataset_key}.json"
     cmd = [
         sys.executable,
-        "scripts/single_eval.py",
+        "scripts/utils/single_eval.py",
         "--model-id",
         model_id,
         "--data-path",

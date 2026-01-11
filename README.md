@@ -65,10 +65,12 @@ The continuous input space is discretized into tokens, called bins.
 - Original dataset results are in 'notebook.ipynb': lstm is the best!  
 - Patience parameter with validation dataset (set at 3)
 
-## Quantile Predictions
-- We now want to forecast quantiles instead of the conditional mean (MSE Loss).
-- Quantile loss is called Pinball. It's computed for each quantile
-- RMSE is still computed by the mean of the median quantile
+## Quantile Predictions LSTM/Chronos2 Comparison (15/01 Meeting):
+- We now want to forecast quantiles instead of doing conditional mean regression - predicting the mean of Y/X (MSE Loss).
+- Quantile loss function is the Pinball Loss Function. It's averaged over the quantiles and the forecast horizon. The estimator of this objective function are the corresponding quantiles.
+- RMSE is still one of the comparison metrics - with the median quantile as the forecasted point for both models.
+- Chronos2 is the undisputed winner in this training setting - and so amoung all relevant metrics (see 'notebook.ipynb')
+- Note (Chronos2): Cross-Entropy Loss doesn't take into account the relative distance between bins. Bins discretization is a tradeoff between precision of forecasting (huge amount of bins) and feasable objective loss function that allows training (small amount of bin).
 
 ## References
 - [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`sources/Chronos.pdf`)

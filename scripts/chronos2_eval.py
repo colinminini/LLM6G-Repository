@@ -69,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-path",
         type=Path,
-        default=Path("results/evals/chronos2_test_rmse.json"),
+        default=Path("results/chronos_eval_benchmarking/evals/chronos2_eval.json"),
         help="Where to write the RMSE metrics JSON.",
     )
     return parser.parse_args()

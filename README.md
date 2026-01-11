@@ -63,6 +63,12 @@ The continuous input space is discretized into tokens, called bins.
 - At the same time, to check the logs run: tensorboard --logdir results/logs
 - Instant Dataset is too computationally heavy for every model. We couldn't compute the metrics.
 - Original dataset results are in 'notebook.ipynb': lstm is the best!  
+- Patience parameter with validation dataset (set at 3)
+
+## Quantile Predictions
+- We now want to forecast quantiles instead of the conditional mean (MSE Loss).
+- Quantile loss is called Pinball. It's computed for each quantile
+- RMSE is still computed by the mean of the median quantile
 
 ## References
 - [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`sources/Chronos.pdf`)

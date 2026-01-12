@@ -456,42 +456,11 @@ class Trainer:
                     f"- val_loss={val_loss:.6f} "
                     f"- val_rmse={val_rmse:.6f} "
                 )
-                train_quantile_message = self._format_quantile_metrics(
-                    "train", train_quantiles
-                )
-                val_quantile_message = self._format_quantile_metrics(
-                    "val", val_quantiles
-                )
-                train_interval_message = self._format_interval_metrics(
-                    "train", train_coverage, train_width
-                )
-                val_interval_message = self._format_interval_metrics(
-                    "val", val_coverage, val_width
-                )
-                if train_quantile_message:
-                    message += f"- {train_quantile_message} "
-                if val_quantile_message:
-                    message += f"- {val_quantile_message} "
-                if train_interval_message:
-                    message += f"- {train_interval_message} "
-                if val_interval_message:
-                    message += f"- {val_interval_message} "
                 if test_loader is not None:
-                    message += f"- test_rmse={test_rmse:.6f} " # pyright: ignore[reportPossiblyUnboundVariable]
-                    test_quantile_message = self._format_quantile_metrics(
-                        "test", test_quantiles # type: ignore
+                    message += (
+                        f"- test_loss={test_loss:.6f} " # pyright: ignore[reportPossiblyUnboundVariable]
+                        f"- test_rmse={test_rmse:.6f} " # pyright: ignore[reportPossiblyUnboundVariable]
                     )
-                    test_interval_message = self._format_interval_metrics(
-                        "test", test_coverage, test_width # pyright: ignore[reportPossiblyUnboundVariable]
-                    )
-                    if test_quantile_message:
-                        message += f"- {test_quantile_message} "
-                    if test_interval_message:
-                        message += f"- {test_interval_message} "
-                message += (
-                    f"- best_val={best_val:.6f} "
-                    f"- patience={num_increase}/{self.config.patience}"
-                )
                 print(message)
         finally:
             writer.close()

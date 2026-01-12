@@ -44,7 +44,7 @@ def _format_metric_value(value: Any) -> str:
     if isinstance(value, float):
         if math.isnan(value):
             return "nan"
-        return f"{value:.6f}"
+        return f"{value:.3f}"
     return str(value)
 
 
@@ -157,7 +157,7 @@ class Trainer:
         if not metrics or not self.quantiles:
             return ""
         parts = [
-            f"{phase}_{_format_quantile_key(q)}={value:.6f}"
+            f"{phase}_{_format_quantile_key(q)}={value:.3f}"
             for q, value in zip(self.quantiles, metrics)
         ]
         return " ".join(parts)
@@ -170,9 +170,9 @@ class Trainer:
     ) -> str:
         parts: list[str] = []
         if coverage is not None:
-            parts.append(f"{phase}_coverage={coverage:.6f}")
+            parts.append(f"{phase}_coverage={coverage:.3f}")
         if interval_width is not None:
-            parts.append(f"{phase}_interval_width={interval_width:.6f}")
+            parts.append(f"{phase}_interval_width={interval_width:.3f}")
         return " ".join(parts)
 
     def _log_quantile_metrics(
@@ -280,7 +280,7 @@ class Trainer:
             if batch_idx % 5000 == 0:
                 print(
                     f"{phase.capitalize()} epoch {epoch} batch {batch_idx} "
-                    f"loss={loss.item():.6f}"
+                    f"loss={loss.item():.3f}"
                 )
 
             total_loss += float(loss.item())
@@ -444,22 +444,22 @@ class Trainer:
                 if num_increase >= self.config.patience:
                     print(
                         "Early stopping at epoch "
-                        f"{epoch}: train_rmse={train_rmse:.6f}, val_rmse={val_rmse:.6f}, test_rmse={test_rmse:.6f}" # pyright: ignore[reportPossiblyUnboundVariable]
+                        f"{epoch}: train_rmse={train_rmse:.3f}, val_rmse={val_rmse:.3f}, test_rmse={test_rmse:.3f}" # pyright: ignore[reportPossiblyUnboundVariable]
                     )
                     break
 
                 message = (
                     "Epoch "
                     f"{epoch}/{self.config.max_epochs} "
-                    f"- train_loss={train_loss:.6f} "
-                    f"- train_rmse={train_rmse:.6f} "
-                    f"- val_loss={val_loss:.6f} "
-                    f"- val_rmse={val_rmse:.6f} "
+                    f"- train_loss={train_loss:.3f} "
+                    f"- train_rmse={train_rmse:.3f} "
+                    f"- val_loss={val_loss:.3f} "
+                    f"- val_rmse={val_rmse:.3f} "
                 )
                 if test_loader is not None:
                     message += (
-                        f"- test_loss={test_loss:.6f} " # pyright: ignore[reportPossiblyUnboundVariable]
-                        f"- test_rmse={test_rmse:.6f} " # pyright: ignore[reportPossiblyUnboundVariable]
+                        f"- test_loss={test_loss:.3f} " # pyright: ignore[reportPossiblyUnboundVariable]
+                        f"- test_rmse={test_rmse:.3f} " # pyright: ignore[reportPossiblyUnboundVariable]
                     )
                 print(message)
         finally:

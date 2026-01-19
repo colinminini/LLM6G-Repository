@@ -30,6 +30,10 @@ DATASETS: Dict[str, DatasetConfig] = {
         "input": pathlib.Path("data/histo/histo_trafic_instant_short.csv"),
         "processed": pathlib.Path("data/processed/processed_trafic_instant_short.jsonl"),
     },
+    "1to7": {
+        "input": pathlib.Path("data/histo/histo_1to7.csv"),
+        "processed": pathlib.Path("data/processed/processed_trafic_1to7.jsonl"),
+    },
 }
 
 DATASET_ALIASES: Dict[str, str] = {

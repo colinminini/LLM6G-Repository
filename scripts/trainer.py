@@ -117,6 +117,38 @@ class QuantileLoss(nn.Module):
         return loss.mean()
 
 
+class GaussianNLLLoss(nn.Module):
+    """Negative log-likelihood for Gaussian outputs."""
+
+    output_type = "gaussian"
+
+    def __init__(self, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, preds: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        if preds.dim() != 3 or preds.size(-1) != 2:
+            raise ValueError(
+                "Expected predictions with shape (batch, forecast_len, 2) for Gaussian parameters."
+            )
+        mu = preds[..., 0]
+        sigma = torch.clamp(preds[..., 1], min=self.eps)
+        if target.dim() == 1:
+            target = target.unsqueeze(-1)
+        if target.dim() == 2:
+            target = target
+        if target.dim() != 2:
+            raise ValueError(
+                "Expected targets with shape (batch, forecast_len)."
+            )
+        if target.size(0) != mu.size(0) or target.size(1) != mu.size(1):
+            raise ValueError("Target shape does not match predictions.")
+        loss = 0.5 * ((target - mu) / sigma).pow(2) + torch.log(sigma) + 0.5 * math.log(
+            2 * math.pi
+        )
+        return loss.mean()
+
+
 class Trainer:
     """Train a model with early stopping based on validation loss increases."""
 
@@ -227,10 +259,25 @@ class Trainer:
             if train:
                 self.optimizer.zero_grad(set_to_none=True)
 
-            outputs = self.model(inputs)
+            if getattr(self.model, "uses_targets", False):
+                outputs = self.model(inputs, targets=targets)
+            else:
+                outputs = self.model(inputs)
             loss = self.loss_fn(outputs, targets)
+            output_type = getattr(self.loss_fn, "output_type", None)
             preds_for_rmse = outputs
-            if outputs.dim() == 3:
+            quantile_preds: torch.Tensor | None = None
+            if output_type == "gaussian":
+                mu = outputs[..., 0]
+                sigma = torch.clamp(outputs[..., 1], min=1e-6)
+                preds_for_rmse = mu
+                if self.quantiles:
+                    q = torch.tensor(
+                        self.quantiles, device=outputs.device, dtype=mu.dtype
+                    ).view(1, 1, -1)
+                    dist = torch.distributions.Normal(mu.unsqueeze(-1), sigma.unsqueeze(-1))
+                    quantile_preds = dist.icdf(q)
+            elif outputs.dim() == 3:
                 if self.quantiles and outputs.size(-1) != len(self.quantiles):
                     raise ValueError("Quantile count does not match model outputs.")
                 # Track RMSE using the median quantile when available.
@@ -240,21 +287,24 @@ class Trainer:
                     median_idx = self.median_index
                 preds_for_rmse = outputs[..., median_idx]
                 if self.quantiles:
-                    targets_3d = targets.unsqueeze(-1) if targets.dim() == 2 else targets
-                    errors = targets_3d - outputs
-                    q = torch.tensor(self.quantiles, device=outputs.device).view(1, 1, -1)
-                    loss_q = torch.maximum(q * errors, (q - 1) * errors)
-                    batch_sum = loss_q.detach().sum(dim=(0, 1)).cpu().tolist()
-                    if quantile_loss_sum is None:
-                        quantile_loss_sum = [0.0 for _ in batch_sum]
-                    for idx, value in enumerate(batch_sum):
-                        quantile_loss_sum[idx] += float(value)
-                    quantile_count += outputs.size(0) * outputs.size(1)
+                    quantile_preds = outputs
+
+            if quantile_preds is not None and self.quantiles:
+                targets_3d = targets.unsqueeze(-1) if targets.dim() == 2 else targets
+                errors = targets_3d - quantile_preds
+                q = torch.tensor(self.quantiles, device=outputs.device).view(1, 1, -1)
+                loss_q = torch.maximum(q * errors, (q - 1) * errors)
+                batch_sum = loss_q.detach().sum(dim=(0, 1)).cpu().tolist()
+                if quantile_loss_sum is None:
+                    quantile_loss_sum = [0.0 for _ in batch_sum]
+                for idx, value in enumerate(batch_sum):
+                    quantile_loss_sum[idx] += float(value)
+                quantile_count += quantile_preds.size(0) * quantile_preds.size(1)
                 if self.interval_indices is not None:
                     targets_2d = targets.squeeze(-1) if targets.dim() == 3 else targets
                     lower_idx, upper_idx = self.interval_indices
-                    lower_pred = outputs[..., lower_idx]
-                    upper_pred = outputs[..., upper_idx]
+                    lower_pred = quantile_preds[..., lower_idx]
+                    upper_pred = quantile_preds[..., upper_idx]
                     within = (targets_2d >= lower_pred) & (targets_2d <= upper_pred)
                     coverage_hits += float(within.sum().item())
                     coverage_count += targets_2d.numel()

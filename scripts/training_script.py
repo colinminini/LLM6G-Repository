@@ -1,5 +1,5 @@
 """
-Training entrypoint for LSTM quantile forecasting.
+Training entrypoint for quantile forecasting baselines.
 """
 
 from __future__ import annotations
@@ -11,11 +11,12 @@ import torch
 from torch import optim
 
 from scripts.loader import DataLoaderConfig, build_dataloaders
-from scripts.models import LSTMForecast
-from scripts.trainer import QuantileLoss, Trainer, TrainerConfig
+from scripts.models import DeepARForecast, LSTMForecast, TFTForecast
+from scripts.trainer import GaussianNLLLoss, QuantileLoss, Trainer, TrainerConfig
 
 
 def train_model(
+    model_type: str = "lstm",
     dataset_base: str = "data_instant",
     context_length: int = 128,
     forecast_length: int = 1,
@@ -25,9 +26,13 @@ def train_model(
     learning_rate: float = 1e-3,
     hidden_size: int = 128,
     num_layers: int = 2,
+    num_heads: int = 4,
     quantiles: Sequence[float] = (0.1, 0.5, 0.9),
 ) -> Dict[str, list[float]]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_type = model_type.lower()
+    if model_type not in {"lstm", "deepar", "tft"}:
+        raise ValueError("model_type must be one of: lstm, deepar, tft.")
     data_cfg = DataLoaderConfig(
         dataset_base=dataset_base,
         context_length=context_length,
@@ -38,28 +43,50 @@ def train_model(
     )
     train_loader, val_loader, test_loader = build_dataloaders(data_cfg)
 
-    model = LSTMForecast(
-        context_length=context_length,
-        forecast_length=forecast_length,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        quantiles=quantiles,
-    )
+    if model_type == "lstm":
+        model = LSTMForecast(
+            context_length=context_length,
+            forecast_length=forecast_length,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            quantiles=quantiles,
+        )
+    elif model_type == "deepar":
+        model = DeepARForecast(
+            context_length=context_length,
+            forecast_length=forecast_length,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+        )
+    else:
+        model = TFTForecast(
+            context_length=context_length,
+            forecast_length=forecast_length,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            quantiles=quantiles,
+        )
     model_config = {
+        "model_type": model_type,
         "context_length": context_length,
         "forecast_length": forecast_length,
         "hidden_size": hidden_size,
         "num_layers": num_layers,
+        "num_heads": num_heads,
         "quantiles": list(quantiles),
     }
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    loss_fn = QuantileLoss(quantiles)
+    if model_type == "deepar":
+        loss_fn = GaussianNLLLoss()
+    else:
+        loss_fn = QuantileLoss(quantiles)
 
     trainer_cfg = TrainerConfig(
         max_epochs=max_epochs,
         patience=patience,
-        run_name=f"lstm_quantile_{dataset_base}",
+        run_name=f"{model_type}_quantile_{dataset_base}",
     )
     trainer = Trainer(
         model=model,
@@ -85,7 +112,14 @@ def _parse_quantiles(raw: str) -> list[float]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train an LSTM quantile model.")
+    parser = argparse.ArgumentParser(
+        description="Train a quantile forecasting model (LSTM, DeepAR, or TFT)."
+    )
+    parser.add_argument(
+        "--model-type",
+        default="lstm",
+        help="Model family to train: lstm or deepar.",
+    )
     parser.add_argument("--dataset-base", default="data_instant")
     parser.add_argument("--context-length", type=int, default=128)
     parser.add_argument("--forecast-length", type=int, default=1)
@@ -95,6 +129,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--num-layers", type=int, default=2)
+    parser.add_argument(
+        "--num-heads",
+        type=int,
+        default=4,
+        help="Number of attention heads for TFT (must divide hidden-size).",
+    )
     parser.add_argument(
         "--quantiles",
         default="0.1,0.5,0.9",
@@ -106,6 +146,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     common = dict(
+        model_type=args.model_type,
         dataset_base=args.dataset_base,
         context_length=args.context_length,
         forecast_length=args.forecast_length,
@@ -115,6 +156,7 @@ def main() -> None:
         learning_rate=args.learning_rate,
         hidden_size=args.hidden_size,
         num_layers=args.num_layers,
+        num_heads=args.num_heads,
         quantiles=_parse_quantiles(args.quantiles),
     )
     train_model(**common)

@@ -18,7 +18,10 @@ import pandas as pd
 DEFAULT_JOBS: Dict[str, str] = {
     "histo_trafic_instant.csv": "data_instant.csv",
     "histo_trafic_original.csv": "data_original.csv",
+    "histo_1to7.csv": "data_1to7.csv",
 }
+
+NO_FREQUENCY_ENFORCEMENT = {"histo_1to7.csv"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -160,14 +163,16 @@ def pivot_dataset(df: pd.DataFrame) -> pd.DataFrame:
     return pivot
 
 
-def select_longest_complete_segment(dataset: pd.DataFrame) -> pd.DataFrame:
+def select_longest_complete_segment(
+    dataset: pd.DataFrame, enforce_frequency: bool = True
+) -> pd.DataFrame:
     if "timestamp" not in dataset.columns:
         raise ValueError("Dataset must contain a timestamp column.")
 
     value_df = dataset.drop(columns=["timestamp"])
     complete = ~value_df.isna().any(axis=1)
     timestamps = parse_timestamps(dataset["timestamp"].astype(str).tolist())
-    expected_delta = infer_frequency(timestamps)
+    expected_delta = infer_frequency(timestamps) if enforce_frequency else None
 
     best_start = 0
     best_len = 0
@@ -257,7 +262,8 @@ def write_splits(
 def build_dataset(input_path: Path, output_path: Path, encoding: str) -> None:
     df = load_histo(input_path, encoding)
     dataset = pivot_dataset(df)
-    dataset = select_longest_complete_segment(dataset)
+    enforce_frequency = input_path.name not in NO_FREQUENCY_ENFORCEMENT
+    dataset = select_longest_complete_segment(dataset, enforce_frequency=enforce_frequency)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.to_csv(output_path, index=False)
     write_splits(dataset, output_path.parent / "datasets", output_path.stem)

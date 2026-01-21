@@ -79,6 +79,9 @@ The continuous input space is discretized into tokens, called bins.
 - On the original dataset chronos2 is the best model because of limited amount of training samples
 - On the 1 to 7 instantaneous dataset; DeeepAR performs the best after training
 - DeepAR is a probabilistic model, designed to be trained on several time-series. The time-series are assigned a score of being selected. An LSTM encodes the context history. A linear layer takes the encoded context and outputs the mean and std of a gaussian (for real-value prediction). The input history context is used for scaling sample-wise. The prediction linear layer output then gets re-sclaed. In our case we only train on one time-series. During inference it autoregressively predicts the next values from the input context. During training, the real value from the target forecast is used for the following predictions.
+- DeepAR is trained using GaussianNLLLoss thus performing better for RMSE Metric on 1 to 7 dataset
+- LSTM (quantile) and TFT are trained using quantile loss thus both perform better for quantile metrics on 1 to 7 dataset
+- DeepAR Quantiles are computed with its output - namely its Gaussian parameters for each forecasted timestamp
 
 ## References
 - [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`sources/Chronos.pdf`)

@@ -74,6 +74,12 @@ The continuous input space is discretized into tokens, called bins.
 - Note : Cross-Entropy Loss doesn't take into account the relative distance between bins. Bins discretization is a tradeoff between precision of forecasting (huge amount of bins) and feasable objective loss function that allows training (small amount of bin).
 - 2nd Note: For several steps forecasting, auto-regressive models can be subjected to compounding errors. For time-series forecasting it might be better to avoid this and outpout the forecasted vector in a single forward pass.
 
+## DeepAR and TFT Implementation and Full Benchmark (22/01 Meeting):
+![Benchmark plot](sources/Benchmark.png)
+- On the original dataset chronos2 is the best model because of limited amount of training samples
+- On the 1 to 7 instantaneous dataset; DeeepAR performs the best after training
+- DeepAR is a probabilistic model, designed to be trained on several time-series. The time-series are assigned a score of being selected. An LSTM encodes the context history. A linear layer takes the encoded context and outputs the mean and std of a gaussian (for real-value prediction). The input history context is used for scaling sample-wise. The prediction linear layer output then gets re-sclaed. In our case we only train on one time-series. During inference it autoregressively predicts the next values from the input context. During training, the real value from the target forecast is used for the following predictions.
+
 ## References
 - [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`sources/Chronos.pdf`)
 - [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`sources/KTH.pdf`)

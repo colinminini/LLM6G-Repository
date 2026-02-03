@@ -3,7 +3,6 @@ __pycache__/
 data/histo/histo_trafic_instant.csv
 data/processed/processed_trafic_instant.jsonl
 Notes_Projet_LLM6G.txt
-README_copy.md
 *.pyc
 .DS_Store
 .ipynb_checkpoints
@@ -11,3 +10,4 @@ data/datasets/data_instant_test.csv
 data/datasets/data_instant_train.csv
 data/datasets/data_instant_val.csv
 data/data_instant.csv
+results/benchmarks

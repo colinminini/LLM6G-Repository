@@ -21,6 +21,7 @@ Hyperparameter notes
 The primary AutoGluon knobs used here are:
 - prediction_length: Forecast horizon in time steps.
 - freq: Data frequency used to reindex/aggregate (e.g., "S" for seconds).
+- use_integer_timestamps: If True, ignore dataset timestamps and build a regular index.
 - eval_metric: Metric used for AutoGluon tuning (e.g., "MASE").
 - time_limit: Training time budget (seconds).
 - known_covariates_names: Optional covariates to pass into the model.
@@ -53,6 +54,8 @@ class Chronos2FineTuneConfig:
     quantiles: Sequence[float] = (0.1, 0.5, 0.9)
 
     freq: str | None = None
+    use_integer_timestamps: bool = True
+    synthetic_start: str = "2000-01-01 00:00:00"
     eval_metric: str = "RMSE"
     time_limit: int | None = 300
     known_covariates_names: Sequence[str] = ()
@@ -108,6 +111,8 @@ def load_ts_dataframe(
     freq: str,
     dataset_dir: Path = Path("data/datasets"),
     timestamp_col: str = "timestamp",
+    use_integer_timestamps: bool = True,
+    synthetic_start: str = "2000-01-01 00:00:00",
 ) -> TimeSeriesDataFrame:
     """Load a split CSV and convert it into a TimeSeriesDataFrame."""
 
@@ -115,8 +120,14 @@ def load_ts_dataframe(
     df = pd.read_csv(path)
     if timestamp_col not in df.columns:
         raise ValueError(f"Expected '{timestamp_col}' column in {path}.")
+    if use_integer_timestamps:
+        # Replace timestamps with a synthetic regular index.
+        df[timestamp_col] = pd.date_range(
+            start=synthetic_start, periods=len(df), freq=freq
+        )
+    else:
+        df[timestamp_col] = pd.to_datetime(df[timestamp_col])
     df = df.melt(id_vars=[timestamp_col], var_name="item_id", value_name="target")
-    df[timestamp_col] = pd.to_datetime(df[timestamp_col])
     ts_df = TimeSeriesDataFrame.from_data_frame(
         df, id_column="item_id", timestamp_column=timestamp_col
     )
@@ -133,6 +144,8 @@ def load_splits_for_autogluon(
         timestamp_col=config.timestamp_col,
     )
     freq = config.freq or infer_freq_from_wide(wide_train, timestamp_col=config.timestamp_col)
+    if config.use_integer_timestamps and not freq:
+        raise ValueError("freq must be set when use_integer_timestamps=True.")
 
     train_data = load_ts_dataframe(
         config.dataset_base,
@@ -140,6 +153,8 @@ def load_splits_for_autogluon(
         freq=freq,
         dataset_dir=config.dataset_dir,
         timestamp_col=config.timestamp_col,
+        use_integer_timestamps=config.use_integer_timestamps,
+        synthetic_start=config.synthetic_start,
     )
     val_data = load_ts_dataframe(
         config.dataset_base,
@@ -147,6 +162,8 @@ def load_splits_for_autogluon(
         freq=freq,
         dataset_dir=config.dataset_dir,
         timestamp_col=config.timestamp_col,
+        use_integer_timestamps=config.use_integer_timestamps,
+        synthetic_start=config.synthetic_start,
     )
     test_data = load_ts_dataframe(
         config.dataset_base,
@@ -154,6 +171,8 @@ def load_splits_for_autogluon(
         freq=freq,
         dataset_dir=config.dataset_dir,
         timestamp_col=config.timestamp_col,
+        use_integer_timestamps=config.use_integer_timestamps,
+        synthetic_start=config.synthetic_start,
     )
 
     return train_data, val_data, test_data, freq

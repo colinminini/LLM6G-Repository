@@ -4,6 +4,7 @@ Forecasting per-sector traffic to support energy-aware radio access networks usi
 ## Environment
 - Create an isolated environment (e.g., `python3 -m venv .venv && source .venv/bin/activate`).
 - Install dependencies from `requirements.txt` (`pip install -r requirements.txt`). Chronos inference runs on device; GPU is optional.
+- AutoGluon fine-tuning requires `autogluon.timeseries>=1.0` alongside the base PyTorch stack.
 
 ## Goal and approach
 - We forecast traffic (Mbps) for each antenna sector to inform sleep-mode and energy-management policies.

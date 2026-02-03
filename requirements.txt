@@ -6,9 +6,10 @@ seaborn>=0.13
 jupyter>=1.0
 pyarrow>=14.0.1
 tensorboard>=2.16
+autogluon.timeseries>=1.0
 
 # Core deep learning stacks
 torch>=2.3
 
 # Time-series forecasting
-chronos-forecasting>=1.0.0
+chronos-forecasting>=2.1.0

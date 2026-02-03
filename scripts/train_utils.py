@@ -1,9 +1,10 @@
 """
-Training utilities for quantile time-series models.
+Training utilities for quantile time-series models and baseline training helpers.
 """
 
 from __future__ import annotations
 
+import argparse
 import math
 import time
 from dataclasses import dataclass
@@ -11,9 +12,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 import torch
-from torch import nn
+from torch import nn, optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+
+from scripts.loader import DataLoaderConfig, build_dataloaders
+from scripts.models import DeepARForecast, LSTMForecast, TFTForecast
 
 
 @dataclass
@@ -24,6 +28,15 @@ class TrainerConfig:
     save_dir: Path = Path("results/models")
     log_dir: Path = Path("results/logs")
     run_name: str = "run"
+    monitor_metric: str = "coverage"
+
+
+_DATASET_ALIASES = {
+    "1to7": "data_1to7",
+    "1_to_7": "data_1to7",
+    "data_1to7": "data_1to7",
+    "data_1_to_7": "data_1to7",
+}
 
 
 def _format_quantile_key(q: float) -> str:
@@ -108,7 +121,7 @@ class QuantileLoss(nn.Module):
         if target.size(0) != preds.size(0) or target.size(1) != preds.size(1):
             raise ValueError("Target shape does not match predictions.")
 
-        q = self.quantiles.view(1, 1, -1) # type: ignore
+        q = self.quantiles.view(1, 1, -1)  # type: ignore
         if q.size(-1) != preds.size(-1):
             raise ValueError("Quantile count does not match predictions.")
 
@@ -263,6 +276,7 @@ class Trainer:
                 outputs = self.model(inputs, targets=targets)
             else:
                 outputs = self.model(inputs)
+            # Explicit loss function for supervised baselines (pinball / Gaussian NLL).
             loss = self.loss_fn(outputs, targets)
             output_type = getattr(self.loss_fn, "output_type", None)
             preds_for_rmse = outputs
@@ -369,7 +383,7 @@ class Trainer:
             history["test_rmse"] = []
             history["test_coverage"] = []
             history["test_interval_width"] = []
-        best_val = float("inf")
+        best_metric: float | None = None
         num_increase = 0
         writer = SummaryWriter(log_dir=self.config.log_dir / self.config.run_name)
         best_path = self.config.save_dir / f"{self.config.run_name}_best.pt"
@@ -426,7 +440,8 @@ class Trainer:
                     writer.add_scalar("interval_width/train", train_width, epoch)
                 if val_width is not None:
                     writer.add_scalar("interval_width/val", val_width, epoch)
-                writer.add_scalar("metrics/best_val", best_val, epoch)
+                if best_metric is not None:
+                    writer.add_scalar("metrics/best_val", best_metric, epoch)
                 writer.add_scalar("metrics/patience_count", num_increase, epoch)
                 writer.add_scalar("metrics/learning_rate", self.optimizer.param_groups[0]["lr"], epoch)
 
@@ -459,12 +474,25 @@ class Trainer:
                 epoch_time = time.perf_counter() - epoch_start
                 writer.add_scalar("metrics/epoch_time_sec", epoch_time, epoch)
 
-                if val_loss < best_val:
-                    best_val = val_loss
+                monitor_name, monitor_value, monitor_mode = self._select_monitor_value(
+                    val_loss, val_coverage
+                )
+                if best_metric is None:
+                    best_metric = monitor_value
                     num_increase = 0
                     self._save_weights(best_path)
                 else:
-                    num_increase += 1
+                    improved = (
+                        monitor_value < best_metric
+                        if monitor_mode == "min"
+                        else monitor_value > best_metric
+                    )
+                    if improved:
+                        best_metric = monitor_value
+                        num_increase = 0
+                        self._save_weights(best_path)
+                    else:
+                        num_increase += 1
 
                 last_summary = {
                     "train_loss": train_loss,
@@ -477,24 +505,25 @@ class Trainer:
                     "val_coverage": val_coverage,
                     "train_width": train_width,
                     "val_width": val_width,
-                    "best_val": best_val,
+                    "best_val": best_metric,
+                    "monitor_name": monitor_name,
                     "patience": num_increase,
                 }
                 if test_loader is not None:
                     last_summary.update(
                         {
-                            "test_loss": test_loss, # pyright: ignore[reportPossiblyUnboundVariable]
-                            "test_rmse": test_rmse, # type: ignore
-                            "test_quantiles": test_quantiles, # pyright: ignore[reportPossiblyUnboundVariable]
-                            "test_coverage": test_coverage, # pyright: ignore[reportPossiblyUnboundVariable]
-                            "test_width": test_width, # type: ignore
+                            "test_loss": test_loss,  # pyright: ignore[reportPossiblyUnboundVariable]
+                            "test_rmse": test_rmse,  # type: ignore
+                            "test_quantiles": test_quantiles,  # pyright: ignore[reportPossiblyUnboundVariable]
+                            "test_coverage": test_coverage,  # pyright: ignore[reportPossiblyUnboundVariable]
+                            "test_width": test_width,  # type: ignore
                         }
                     )
 
                 if num_increase >= self.config.patience:
                     print(
                         "Early stopping at epoch "
-                        f"{epoch}: train_rmse={train_rmse:.3f}, val_rmse={val_rmse:.3f}, test_rmse={test_rmse:.3f}" # pyright: ignore[reportPossiblyUnboundVariable]
+                        f"{epoch}: train_rmse={train_rmse:.3f}, val_rmse={val_rmse:.3f}, test_rmse={test_rmse:.3f}"  # pyright: ignore[reportPossiblyUnboundVariable]
                     )
                     break
 
@@ -508,8 +537,8 @@ class Trainer:
                 )
                 if test_loader is not None:
                     message += (
-                        f"- test_loss={test_loss:.3f} " # pyright: ignore[reportPossiblyUnboundVariable]
-                        f"- test_rmse={test_rmse:.3f} " # pyright: ignore[reportPossiblyUnboundVariable]
+                        f"- test_loss={test_loss:.3f} "  # pyright: ignore[reportPossiblyUnboundVariable]
+                        f"- test_rmse={test_rmse:.3f} "  # pyright: ignore[reportPossiblyUnboundVariable]
                     )
                 print(message)
         finally:
@@ -545,6 +574,8 @@ class Trainer:
                     metrics["test_interval_width"] = last_summary.get("test_width")
             metrics["best_val"] = last_summary["best_val"]
             metrics["patience"] = f"{last_summary['patience']}/{self.config.patience}"
+            if last_summary.get("monitor_name"):
+                metrics["monitor"] = last_summary["monitor_name"]
             _display_metrics_table("Final metrics", metrics)
 
         return history
@@ -558,3 +589,219 @@ class Trainer:
     def _save_weights(self, out_path: Path) -> None:
         self.config.save_dir.mkdir(parents=True, exist_ok=True)
         torch.save(self.model.state_dict(), out_path)
+
+    def _select_monitor_value(
+        self, val_loss: float, val_coverage: float | None
+    ) -> tuple[str, float, str]:
+        metric = self.config.monitor_metric.lower()
+        if metric == "coverage" and val_coverage is not None and not math.isnan(val_coverage):
+            return "coverage", float(val_coverage), "max"
+        return "loss", float(val_loss), "min"
+
+
+def _normalize_dataset_base(dataset_base: str) -> str:
+    base = dataset_base.strip().lower()
+    if base in _DATASET_ALIASES:
+        return _DATASET_ALIASES[base]
+    raise ValueError(
+        "Only the 1_to_7 dataset is supported for training. "
+        "Use one of: data_1to7, data_1_to_7, 1to7, 1_to_7."
+    )
+
+
+def train_model(
+    model_type: str = "lstm",
+    dataset_base: str = "data_1to7",
+    context_length: int = 128,
+    forecast_length: int = 1,
+    batch_size: int = 64,
+    max_epochs: int = 50,
+    patience: int = 3,
+    learning_rate: float = 1e-3,
+    hidden_size: int = 128,
+    num_layers: int = 2,
+    num_heads: int = 4,
+    quantiles: Sequence[float] = (0.1, 0.5, 0.9),
+) -> Dict[str, list[float]]:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dataset_base = _normalize_dataset_base(dataset_base)
+    model_type = model_type.lower()
+    if model_type not in {"lstm", "deepar", "tft"}:
+        raise ValueError("model_type must be one of: lstm, deepar, tft.")
+
+    data_cfg = DataLoaderConfig(
+        dataset_base=dataset_base,
+        context_length=context_length,
+        forecast_length=forecast_length,
+        batch_size=batch_size,
+        shuffle_train=True,
+        pin_memory=device.type == "cuda",
+    )
+    train_loader, val_loader, test_loader = build_dataloaders(data_cfg)
+
+    if model_type == "lstm":
+        model = LSTMForecast(
+            context_length=context_length,
+            forecast_length=forecast_length,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            quantiles=quantiles,
+        )
+    elif model_type == "deepar":
+        model = DeepARForecast(
+            context_length=context_length,
+            forecast_length=forecast_length,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+        )
+    else:
+        model = TFTForecast(
+            context_length=context_length,
+            forecast_length=forecast_length,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            quantiles=quantiles,
+        )
+
+    model_config = {
+        "model_type": model_type,
+        "context_length": context_length,
+        "forecast_length": forecast_length,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "num_heads": num_heads,
+        "quantiles": list(quantiles),
+    }
+
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    if model_type == "deepar":
+        # Explicit loss function for Gaussian outputs.
+        loss_fn = GaussianNLLLoss()
+    else:
+        # Explicit pinball loss for quantile forecasting.
+        loss_fn = QuantileLoss(quantiles)
+
+    trainer_cfg = TrainerConfig(
+        max_epochs=max_epochs,
+        patience=patience,
+        run_name=f"{model_type}_quantile_{dataset_base}",
+        monitor_metric="coverage",
+    )
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        loss_fn=loss_fn,
+        device=device,
+        config=trainer_cfg,
+        model_config=model_config,
+        quantiles=quantiles,
+    )
+    return trainer.fit(train_loader, val_loader, test_loader)
+
+
+def extract_last_coverage(
+    history: Dict[str, list[float]],
+    splits: Sequence[str] = ("train", "val", "test"),
+) -> Dict[str, float]:
+    return {split: history[f"{split}_coverage"][-1] for split in splits}
+
+
+def train_all(
+    model_types: Sequence[str],
+    dataset_base: str,
+    *,
+    context_length: int,
+    forecast_length: int,
+    quantiles: Sequence[float],
+    max_epochs: int,
+    patience: int,
+    hidden_size: int,
+    num_layers: int,
+    num_heads: int,
+) -> tuple[Dict[tuple[str, str], Dict[str, float]], Dict[tuple[str, str], Dict[str, list[float]]]]:
+    train_results: Dict[tuple[str, str], Dict[str, float]] = {}
+    train_histories: Dict[tuple[str, str], Dict[str, list[float]]] = {}
+    for model in model_types:
+        history = train_model(
+            model_type=model,
+            dataset_base=dataset_base,
+            context_length=context_length,
+            forecast_length=forecast_length,
+            quantiles=quantiles,
+            max_epochs=max_epochs,
+            patience=patience,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+        )
+        key = (dataset_base, model)
+        train_histories[key] = history
+        train_results[key] = extract_last_coverage(history)
+    return train_results, train_histories
+
+
+def _parse_quantiles(raw: str) -> list[float]:
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if not parts:
+        raise ValueError("quantiles must be a comma-separated list like 0.1,0.5,0.9")
+    quantiles = [float(part) for part in parts]
+    for q in quantiles:
+        if q <= 0.0 or q >= 1.0:
+            raise ValueError("quantiles must be between 0 and 1 (exclusive).")
+    return quantiles
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train a quantile forecasting model (LSTM, DeepAR, or TFT)."
+    )
+    parser.add_argument(
+        "--model-type",
+        default="lstm",
+        help="Model family to train: lstm, deepar, or tft.",
+    )
+    parser.add_argument("--dataset-base", default="data_1to7")
+    parser.add_argument("--context-length", type=int, default=128)
+    parser.add_argument("--forecast-length", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--max-epochs", type=int, default=50)
+    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--hidden-size", type=int, default=128)
+    parser.add_argument("--num-layers", type=int, default=2)
+    parser.add_argument(
+        "--num-heads",
+        type=int,
+        default=4,
+        help="Number of attention heads for TFT (must divide hidden-size).",
+    )
+    parser.add_argument(
+        "--quantiles",
+        default="0.1,0.5,0.9",
+        help="Comma-separated list of quantiles to predict.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    common = dict(
+        model_type=args.model_type,
+        dataset_base=args.dataset_base,
+        context_length=args.context_length,
+        forecast_length=args.forecast_length,
+        batch_size=args.batch_size,
+        max_epochs=args.max_epochs,
+        patience=args.patience,
+        learning_rate=args.learning_rate,
+        hidden_size=args.hidden_size,
+        num_layers=args.num_layers,
+        num_heads=args.num_heads,
+        quantiles=_parse_quantiles(args.quantiles),
+    )
+    train_model(**common)
+
+
+if __name__ == "__main__":
+    main()

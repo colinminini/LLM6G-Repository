@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tuple
 
 import pandas as pd
+import numpy as np
 from autogluon.timeseries import TimeSeriesPredictor, TimeSeriesDataFrame
 
 
@@ -206,6 +207,7 @@ def run_chronos2_finetune(
         hyperparameters=hyperparameters, # type: ignore
         time_limit=config.time_limit,
         enable_ensemble=config.enable_ensemble,
+        random_seed=np.random.randint(0, 1_000_000),
     )
 
     model_names = [name for name in _get_model_names(predictor) if "Chronos2" in name]

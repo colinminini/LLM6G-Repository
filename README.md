@@ -149,6 +149,14 @@ The continuous input space is discretized into tokens, called bins.
 
 ![Benchmark: LSTM vs DeepAR vs Chronos2](results/plots/benchmark_lstm_deepar_chronos2_data_1to7.png)
 
+### Chronos-2 Context-Length Variation (48 -> 512):
+- We benchmarked **Chronos-2** on `data/data_1to7.csv` with fixed `horizon=48` and varying context lengths:
+  `48, 64, 96, 128, 192, 256, 384, 512`.
+- To make contexts directly comparable, all runs use the **same sampled windows** (paired random windows, fixed seed, fixed evaluation start index).
+- The coverage subplot includes a red `0.95` threshold line to visualize which context is closest to target coverage.
+
+![Chronos-2 Context Sweep Benchmark](results/plots/benchmark_chronos2_context_sweep_48_to_512.png)
+
 
 ## References
 - [1] A. F. Ansari et al., “Chronos-2: From Univariate to Universal Forecasting,” arXiv:2510.15821, 2025. (`sources/Chronos-2.pdf`)

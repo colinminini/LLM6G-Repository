@@ -1,0 +1,9 @@
+context_length,horizon,MAE_CP,coverage_rate,sharpness,tolerance_hit_rate,num_windows_total,output_dir
+48,48,7.318837209302326,0.9270731272824441,1.8759522913870248,0.5388372093023256,4300,/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/chronos2_context_sweep/ctx_48
+64,48,7.151162790697675,0.9272958047563908,1.7850989434804851,0.5474418604651162,4300,/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/chronos2_context_sweep/ctx_64
+96,48,7.310697674418605,0.9183664380511267,1.639105162557041,0.5479069767441861,4300,/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/chronos2_context_sweep/ctx_96
+128,48,7.304418604651163,0.9107954039369377,1.5676710306755157,0.5495348837209302,4300,/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/chronos2_context_sweep/ctx_128
+192,48,7.484418604651163,0.9102387102520709,1.5540216183373918,0.5388372093023256,4300,/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/chronos2_context_sweep/ctx_192
+256,48,7.332093023255814,0.9126436269706957,1.5347740023034773,0.5504651162790698,4300,/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/chronos2_context_sweep/ctx_256
+384,48,7.393720930232558,0.9161173955642647,1.5880928269675822,0.5446511627906977,4300,/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/chronos2_context_sweep/ctx_384
+512,48,7.4293023255813955,0.9207045515275675,1.6065283015255143,0.5430232558139535,4300,/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/chronos2_context_sweep/ctx_512

@@ -13,8 +13,8 @@ Key ideas
    - ZeroShot: pretrained weights, no fine-tuning.
    - FineTuned: pretrained weights with fine_tune=True.
 4) We evaluate each model on train/val/test using:
-   - Coverage: fraction of targets inside [q_low, q_high]
-   - RMSE: root mean squared error using the median quantile (or mean fallback)
+   - Coverage: one-sided fraction of targets below q95 (q95 is enforced)
+   - MAE: mean absolute error using the median quantile (or mean fallback)
 
 Hyperparameter notes
 --------------------
@@ -37,10 +37,37 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tuple
+import warnings
 
 import pandas as pd
 import numpy as np
 from autogluon.timeseries import TimeSeriesPredictor, TimeSeriesDataFrame
+
+
+def _normalize_quantiles(
+    quantiles: Sequence[float],
+    *,
+    required: Sequence[float] = (0.95,),
+) -> tuple[float, ...]:
+    """Return a sorted unique quantile tuple and ensure required levels exist."""
+    values = [float(q) for q in quantiles]
+    if not values:
+        raise ValueError("quantiles must contain at least one value.")
+    for q in values:
+        if q <= 0.0 or q >= 1.0:
+            raise ValueError("quantiles must be in the open interval (0, 1).")
+
+    for req in required:
+        req_f = float(req)
+        if not any(abs(q - req_f) < 1e-8 for q in values):
+            warnings.warn(
+                f"Required quantile q={req_f} was missing; adding it automatically.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            values.append(req_f)
+
+    return tuple(sorted(set(values)))
 
 
 @dataclass
@@ -52,20 +79,25 @@ class Chronos2FineTuneConfig:
     timestamp_col: str = "timestamp"
 
     prediction_length: int = 1
-    quantiles: Sequence[float] = (0.1, 0.5, 0.9)
+    quantiles: Sequence[float] = (0.5, 0.95)
 
     freq: str | None = None
     use_integer_timestamps: bool = True
     synthetic_start: str = "2000-01-01 00:00:00"
-    eval_metric: str = "RMSE"
+    eval_metric: str = "MAE"
     time_limit: int | None = 300
     known_covariates_names: Sequence[str] = ()
     enable_ensemble: bool = False
 
     results_dir: Path = Path("results/benchmarks")
     predictor_path: Path | None = None
+    auto_version_predictor_path: bool = True
 
     hyperparameters: Dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        # Coverage logic relies on q95; keep it always available.
+        self.quantiles = _normalize_quantiles(self.quantiles, required=(0.95,))
 
 
 def build_default_hyperparameters() -> Dict[str, Any]:
@@ -189,15 +221,28 @@ def run_chronos2_finetune(
     """Train Chronos-2 zero-shot and fine-tuned models with AutoGluon."""
 
     hyperparameters = config.hyperparameters or build_default_hyperparameters()
-    predictor_path = config.predictor_path or (
+    base_predictor_path = config.predictor_path or (
         config.results_dir / f"autogluon_{config.dataset_base}"
     )
+    predictor_path = base_predictor_path
+    if config.auto_version_predictor_path and predictor_path.exists():
+        idx = 1
+        while True:
+            candidate = predictor_path.with_name(f"{predictor_path.name}_v{idx}")
+            if not candidate.exists():
+                predictor_path = candidate
+                break
+            idx += 1
+        print(
+            f"Predictor path already existed, using a new run directory: {predictor_path}"
+        )
     predictor_path.mkdir(parents=True, exist_ok=True)
 
     predictor = TimeSeriesPredictor(
         prediction_length=config.prediction_length,
         target="target",
         known_covariates_names=list(config.known_covariates_names),
+        quantile_levels=list(config.quantiles),
         eval_metric=config.eval_metric,
         freq=freq,
         path=str(predictor_path),
@@ -314,12 +359,48 @@ def _resolve_quantile_column(pred_df: pd.DataFrame, q: float) -> str:
     for name in candidates:
         if name in pred_df.columns:
             return name
+
+    numeric_cols: list[tuple[str, float]] = []
+    for col in pred_df.columns:
+        try:
+            numeric_cols.append((str(col), float(col)))
+        except (TypeError, ValueError):
+            continue
+
+    if numeric_cols:
+        best_name, best_q = min(
+            numeric_cols,
+            key=lambda item: (abs(item[1] - q), -item[1]),
+        )
+        warnings.warn(
+            (
+                f"Quantile column for requested q={q} not found; "
+                f"using nearest available q={best_q} (column='{best_name}')."
+            ),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return best_name
+
     raise KeyError(
         f"Quantile column for {q} not found. Available columns: {list(pred_df.columns)}"
     )
 
 
-def compute_coverage_and_rmse(
+def _select_coverage_quantile(
+    quantiles: Sequence[float], target_quantile: float = 0.95
+) -> float:
+    if not quantiles:
+        raise ValueError("quantiles must contain at least one entry.")
+    values = [float(q) for q in quantiles]
+    idx = min(
+        range(len(values)),
+        key=lambda i: (abs(values[i] - target_quantile), -values[i]),
+    )
+    return values[idx]
+
+
+def compute_coverage_and_mae(
     predictor: TimeSeriesPredictor,
     data: TimeSeriesDataFrame,
     *,
@@ -327,18 +408,16 @@ def compute_coverage_and_rmse(
     quantiles: Sequence[float],
     model: str,
 ) -> Dict[str, float]:
-    """Compute coverage and RMSE for a split using last-horizon evaluation."""
+    """Compute one-sided q95 coverage and MAE for last-horizon evaluation."""
+    quantiles = _normalize_quantiles(quantiles, required=(0.95,))
 
     context, actual = _split_context_target(data, prediction_length)
     preds = _predict_with_quantiles(predictor, context, quantiles, model=model)
 
     actual = actual.loc[preds.index]
 
-    low_q = min(quantiles)
-    high_q = max(quantiles)
-
-    low_col = _resolve_quantile_column(preds, low_q)
-    high_col = _resolve_quantile_column(preds, high_q)
+    coverage_q = _select_coverage_quantile(quantiles, target_quantile=0.95)
+    coverage_col = _resolve_quantile_column(preds, coverage_q)
 
     if 0.5 in quantiles:
         median_col = _resolve_quantile_column(preds, 0.5)
@@ -349,11 +428,39 @@ def compute_coverage_and_rmse(
         mid_idx = len(quantiles) // 2
         median_col = _resolve_quantile_column(preds, sorted(quantiles)[mid_idx])
 
-    coverage = ((actual >= preds[low_col]) & (actual <= preds[high_col])).mean()
-    mse = (actual - preds[median_col]).pow(2).mean()
-    rmse = float(mse**0.5)
+    coverage = (actual <= preds[coverage_col]).mean()
+    mae = float((actual - preds[median_col]).abs().mean())
 
-    return {"coverage": float(coverage), "rmse": float(rmse), "count": float(len(actual))}
+    return {
+        "coverage": float(coverage),
+        "coverage_quantile": float(coverage_q),
+        "mae": float(mae),
+        "count": float(len(actual)),
+    }
+
+
+def compute_coverage_and_rmse(
+    predictor: TimeSeriesPredictor,
+    data: TimeSeriesDataFrame,
+    *,
+    prediction_length: int,
+    quantiles: Sequence[float],
+    model: str,
+) -> Dict[str, float]:
+    """Backward-compatible alias; returns MAE under key `rmse`."""
+    metrics = compute_coverage_and_mae(
+        predictor,
+        data,
+        prediction_length=prediction_length,
+        quantiles=quantiles,
+        model=model,
+    )
+    return {
+        "coverage": metrics["coverage"],
+        "coverage_quantile": metrics["coverage_quantile"],
+        "rmse": metrics["mae"],
+        "count": metrics["count"],
+    }
 
 
 def evaluate_chronos2_models(
@@ -370,7 +477,7 @@ def evaluate_chronos2_models(
     rows: List[Dict[str, Any]] = []
     for model_name in model_names:
         for split_name, data in splits.items():
-            metrics = compute_coverage_and_rmse(
+            metrics = compute_coverage_and_mae(
                 predictor,
                 data,
                 prediction_length=prediction_length,
@@ -383,7 +490,8 @@ def evaluate_chronos2_models(
                     "split": split_name,
                     "model": f"autogluon_{model_name}",
                     "coverage": metrics["coverage"],
-                    "rmse": metrics["rmse"],
+                    "coverage_quantile": metrics["coverage_quantile"],
+                    "mae": metrics["mae"],
                     "count": metrics["count"],
                 }
             )

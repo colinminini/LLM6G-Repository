@@ -16,8 +16,8 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from scripts.loader import DataLoaderConfig, build_dataloaders
-from scripts.models import DeepARForecast, LSTMForecast, TFTForecast
+from src.loader import DataLoaderConfig, build_dataloaders
+from src.models import DeepARForecast, LSTMForecast, TFTForecast
 
 
 @dataclass
@@ -51,6 +51,19 @@ def _select_median_index(quantiles: Sequence[float]) -> int:
         return quantiles.index(0.5)
     except ValueError:
         return min(range(len(quantiles)), key=lambda idx: abs(quantiles[idx] - 0.5))
+
+
+def _select_upper_coverage_index(
+    quantiles: Sequence[float], target_quantile: float = 0.95
+) -> int:
+    """Pick the quantile index used for one-sided upper coverage."""
+    if not quantiles:
+        raise ValueError("quantiles must contain at least one entry.")
+    values = list(float(q) for q in quantiles)
+    return min(
+        range(len(values)),
+        key=lambda idx: (abs(values[idx] - target_quantile), -values[idx]),
+    )
 
 
 def _format_metric_value(value: Any) -> str:
@@ -185,6 +198,14 @@ class Trainer:
         self.median_index = (
             _select_median_index(self.quantiles) if self.quantiles else None
         )
+        self.coverage_index = (
+            _select_upper_coverage_index(self.quantiles) if self.quantiles else None
+        )
+        self.coverage_quantile = (
+            self.quantiles[self.coverage_index]
+            if self.quantiles and self.coverage_index is not None
+            else None
+        )
         if self.quantiles and len(self.quantiles) >= 2:
             self.interval_indices = (
                 min(range(len(self.quantiles)), key=self.quantiles.__getitem__),
@@ -314,14 +335,16 @@ class Trainer:
                 for idx, value in enumerate(batch_sum):
                     quantile_loss_sum[idx] += float(value)
                 quantile_count += quantile_preds.size(0) * quantile_preds.size(1)
-                if self.interval_indices is not None:
+                if self.coverage_index is not None:
                     targets_2d = targets.squeeze(-1) if targets.dim() == 3 else targets
+                    upper_pred = quantile_preds[..., self.coverage_index]
+                    within = targets_2d <= upper_pred
+                    coverage_hits += float(within.sum().item())
+                    coverage_count += targets_2d.numel()
+                if self.interval_indices is not None:
                     lower_idx, upper_idx = self.interval_indices
                     lower_pred = quantile_preds[..., lower_idx]
                     upper_pred = quantile_preds[..., upper_idx]
-                    within = (targets_2d >= lower_pred) & (targets_2d <= upper_pred)
-                    coverage_hits += float(within.sum().item())
-                    coverage_count += targets_2d.numel()
                     width = torch.clamp(upper_pred - lower_pred, min=0.0)
                     interval_sum += float(width.sum().item())
                     interval_count += width.numel()
@@ -559,6 +582,8 @@ class Trainer:
                 metrics["train_coverage"] = last_summary["train_coverage"]
             if last_summary.get("val_coverage") is not None:
                 metrics["val_coverage"] = last_summary["val_coverage"]
+            if self.coverage_quantile is not None:
+                metrics["coverage_quantile"] = self.coverage_quantile
             if last_summary.get("train_width") is not None:
                 metrics["train_interval_width"] = last_summary["train_width"]
             if last_summary.get("val_width") is not None:
@@ -621,7 +646,7 @@ def train_model(
     hidden_size: int = 128,
     num_layers: int = 2,
     num_heads: int = 4,
-    quantiles: Sequence[float] = (0.1, 0.5, 0.9),
+    quantiles: Sequence[float] = (0.5, 0.95),
 ) -> Dict[str, list[float]]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset_base = _normalize_dataset_base(dataset_base)
@@ -744,7 +769,7 @@ def train_all(
 def _parse_quantiles(raw: str) -> list[float]:
     parts = [part.strip() for part in raw.split(",") if part.strip()]
     if not parts:
-        raise ValueError("quantiles must be a comma-separated list like 0.1,0.5,0.9")
+        raise ValueError("quantiles must be a comma-separated list like 0.5,0.95")
     quantiles = [float(part) for part in parts]
     for q in quantiles:
         if q <= 0.0 or q >= 1.0:
@@ -778,7 +803,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--quantiles",
-        default="0.1,0.5,0.9",
+        default="0.5,0.95",
         help="Comma-separated list of quantiles to predict.",
     )
     return parser.parse_args()

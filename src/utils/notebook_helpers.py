@@ -61,7 +61,7 @@ def ensure_processed_data(dataset: str = "instant") -> pathlib.Path:
         return data_path
     cmd = [
         sys.executable,
-        "scripts/utils/dataprocessing.py",
+        "src/utils/dataprocessing.py",
         "--input-path",
         str(cfg["input"]),
         "--output-path",
@@ -87,7 +87,7 @@ def evaluate_model(
     out_path = RESULTS_DIR / "evals" / f"eval_{slug}_{dataset_key}.json"
     cmd = [
         sys.executable,
-        "scripts/utils/single_eval.py",
+        "src/utils/single_eval.py",
         "--model-id",
         model_id,
         "--data-path",

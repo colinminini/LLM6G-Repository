@@ -14,7 +14,7 @@ from typing import Tuple
 import torch
 from torch.utils.data import DataLoader
 
-from scripts.dataset import TrafficWindowDataset
+from src.dataset import TrafficWindowDataset
 
 
 @dataclass

@@ -1,5 +1,5 @@
 # LLM6G
-Forecasting per-sector traffic to support energy-aware radio access networks using pretrained Chronos models.
+Forecasting per-sector traffic to support energy-aware radio access networks using deep learning.
 
 ## Environment
 - Create an isolated environment (e.g., `python3 -m venv .venv && source .venv/bin/activate`).
@@ -66,7 +66,7 @@ The continuous input space is discretized into tokens, called bins.
 - Original dataset results are in 'notebook.ipynb': lstm is the best!  
 - Patience parameter with validation dataset (set at 3)
 
-## Quantile Predictions LSTM/Chronos2 Comparison (15/01 Meeting):
+## Quantile Loss Optimization LSTM/Chronos2 Comparison (15/01 Meeting):
 - We now want to forecast quantiles instead of doing conditional mean regression - predicting the mean of Y/X (MSE Loss).
 - Cross-Entropy loss optimization on bins (discretized space) allows for a more expressive pdf representation compared the conditional mean estimator we get from the L2 Loss optimization on the continuous space - which only work for a dataset of unimodal conditional pdf (Y/X).
 - Quantile loss function is the Pinball Loss Function. It's averaged over the quantiles and the forecast horizon. The estimator of this objective function are the corresponding quantiles.
@@ -75,8 +75,9 @@ The continuous input space is discretized into tokens, called bins.
 - Note : Cross-Entropy Loss doesn't take into account the relative distance between bins. Bins discretization is a tradeoff between precision of forecasting (huge amount of bins) and feasable objective loss function that allows training (small amount of bin).
 - 2nd Note: For several steps forecasting, auto-regressive models can be subjected to compounding errors. For time-series forecasting it might be better to avoid this and outpout the forecasted vector in a single forward pass.
 
-## DeepAR and TFT Implementation and Full Benchmark (22/01 Meeting):
-![Benchmark plot](sources/Benchmark.png)
+
+## DeepAR and TFT Implementation and RMSE Benchmark (22/01 Meeting):
+![Benchmark plot](results/plots/Benchmark.png)
 - On the original dataset chronos2 is the best model because of limited amount of training samples
 - On the 1 to 7 instantaneous dataset; DeeepAR performs the best after training
 - DeepAR is a probabilistic model, designed to be trained on several time-series. The time-series are assigned a score of being selected. An LSTM encodes the context history. A linear layer takes the encoded context and outputs the mean and std of a gaussian (for real-value prediction). The input history context is used for scaling sample-wise. The prediction linear layer output then gets re-sclaed. In our case we only train on one time-series. During inference it autoregressively predicts the next values from the input context. During training, the real value from the target forecast is used for the following predictions.
@@ -84,6 +85,71 @@ The continuous input space is discretized into tokens, called bins.
 - LSTM (quantile) and TFT are trained using quantile loss thus both perform better for quantile metrics on 1 to 7 dataset
 - DeepAR Quantiles are computed with its output - namely its Gaussian parameters for each forecasted timestamp
 
+
+## Coverage Benchmarking with Chronos-2 Finetuning (05/02 Meeting):
+
+![Coverage Benchmark (Train Notebook)](results/plots/benchmark_train_models_display_coverage.png)
+
+
+## Full System Design and Evaluation (03/03 Meeting)
+
+### What is new in the repository:
+- All of our forecasting stack is probabilistic end-to-end: each model returns `q50` (median path) and `q95` (upper path).
+- LSTM is trained with Pinball loss for quantile regression; default training quantiles are now `(0.5, 0.95)` and the output is multi-step. One forward pass covers the full forecasting window quantiles preds.
+- DeepAR remains Gaussian (`mu`, `sigma`) and is converted to quantiles during inference (`q50 = mu`, `q95 = mu + 1.645*sigma`).
+- Chronos-2 integration now reads quantiles directly from model output tensors (no `num_samples` argument in `predict`); `q50`/`q95` indices are resolved from wrapper metadata, with fallback to Chronos-2 21-quantile layout (`10`, `-2`).
+- Hybrid pipeline logic: detect first change point `tau_pred` on `q50` with Ruptures PELT, then compute the stationary “Safe Ceiling” as `max(q95[:tau_pred])` (or full horizon if no change point).
+- Evaluation pipeline supports rolling and random window sampling on selected datasets (including full `data/data_1to7.csv` and `data/data_original.csv`) and saves metrics to `results/evaluation/`.
+- Reported metrics are change-point MAE, tolerance hit rate, coverage rate under the predicted safe ceiling, and sharpness (over-provisioning).
+- Visualization notebooks now plot history, future truth, `q50`, `q95`, `tau_pred`, `tau_true`, and save figures under `results/evaluation/` or `results/plots/`.
+
+### Current System (Quick View):
+- What we forecast:
+  per-sector traffic time series (Mbps), using probabilistic trajectories `q50` (median) and `q95` (upper quantile) over a multi-step horizon.
+- Pipeline:
+  forecast (`q50`, `q95`) -> detect first change point `tau_pred` on `q50` -> compute safe ceiling as `max(q95[0:tau_pred])` -> evaluate against future ground truth and `tau_true`.
+- Forecasting mode by model:
+  `LSTM` outputs direct multi-step quantile vectors in one forward pass; `Chronos2` returns direct multi-step quantiles from its output tensor.
+- DeepAR training vs inference:
+  training uses teacher forcing on the full horizon (`context + true targets`, shifted input) and optimizes Gaussian NLL on all future steps; inference is autoregressive rollout, where each step reuses the previous prediction as next input.
+- DeepAR quantile conversion in this repo:
+  from Gaussian outputs, we use `q50 = mu` and `q95 = mu + 1.645*sigma` (deterministic path in eval with `sample=False`).
+- Key hyperparameters used in system evaluation:
+  `context_length`, `forecast_length/horizon`, quantiles (`0.5`, `0.95`), CP detector settings (`model='normal'`, `penalty`, `min_size`, `jump`), and sampling settings (rolling/random windows).
+- Evaluation metrics:
+  `MAE_CP` (change-point timing error), `Tolerance Hit Rate` (`|tau_pred - tau_true| <= 3`), `Coverage Rate` (`actual <= safe_ceiling`), `Sharpness` (`safe_ceiling - max(actual)`; lower is tighter), better to be positive.
+- Coverage definition used in `system_eval`:
+  for each sampled window, we detect `tau_true` on the future ground truth and build the true pre-change interval `[t, tau_true)` (or full horizon if no change). We then count the fraction of points in that interval that are below the predicted `safe_ceiling = max(q95[0:tau_pred])`. The reported `coverage_rate` is the global ratio `total_hits / total_points` aggregated over all sampled windows (length-weighted, not a simple mean of per-window coverages).
+
+### Horizon Consistency (Train vs Eval):
+- If eval horizon > training horizon:
+  In `src/pipeline.py`, baseline checkpoints are extended autoregressively by chaining forecast blocks and feeding predicted `q50` back as new context. This increases compounding error, can flatten forecasts, and usually degrades CP detection and coverage.
+- If eval horizon < training horizon:
+  The model outputs are truncated to the first eval steps. This is valid, but those early-step metrics are not directly comparable to a model trained specifically for that shorter horizon.
+- Practical recommendation:
+  Keep `forecast_length` (training) == `horizon` (system eval) for LSTM/DeepAR/TFT benchmark runs. If you must mismatch, report it explicitly in results.
+
+### Plot Configuration Note:
+- For the benchmark plots shown here, we used:
+  `context_length = 48` and `forecast_length = horizon = 48`.
+- Reason:
+  dataset split limitations (`val` and `test` lengths are too short for `128` in our setup), so `48` keeps enough valid evaluation windows.
+- Sampling used for eval metrics:
+  we evaluate on `50` random samples/windows per series (with paired windows across systems) and aggregate metrics over all sampled windows; with 86 series this is `50 x 86 = 4300` sampled windows per system.
+- Important evaluation scope note:
+  for these plots, system eval was run on the full `data/data_1to7.csv` timeline, including the first 80% that was used as training period for LSTM/DeepAR.
+- Interpretation impact:
+  this can make LSTM/DeepAR look stronger than on strictly unseen-only evaluation; we accepted this setup due to size limitations of standalone `val`/`test` portions for the chosen horizon/context settings.
+- Consistency choice:
+  we kept the same setting for system eval and Chronos2 comparison to keep results comparable across `LSTM`, `DeepAR`, and `Chronos2`.
+- Expected tradeoff:
+  we suspect Chronos2 could improve with a larger context window, but we do not increase it in these benchmark plots because the DL baselines (`LSTM`, `DeepAR`) are trained/evaluated with the shared constrained setup.
+
+![System Eval Example](results/plots/system_eval_example.png)
+
+![Benchmark: LSTM vs DeepAR vs Chronos2](results/plots/benchmark_lstm_deepar_chronos2.png)
+
+
 ## References
-- [1] A. F. Ansari et al., “Chronos: Learning the Language of Time Series,” TMLR 2024. (`sources/Chronos.pdf`)
+- [1] A. F. Ansari et al., “Chronos-2: From Univariate to Universal Forecasting,” arXiv:2510.15821, 2025. (`sources/Chronos-2.pdf`)
 - [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`sources/KTH.pdf`)

@@ -34,7 +34,7 @@ class LSTMForecast(nn.Module):
         hidden_size: int = 128,
         num_layers: int = 2,
         dropout: float = 0.1,
-        quantiles: Sequence[float] = (0.1, 0.5, 0.9),
+        quantiles: Sequence[float] = (0.5, 0.95),
     ) -> None:
         super().__init__()
         self.context_length = context_length

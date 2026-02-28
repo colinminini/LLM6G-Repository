@@ -147,7 +147,7 @@ The continuous input space is discretized into tokens, called bins.
 
 ![System Eval Example](results/plots/system_eval_example.png)
 
-![Benchmark: LSTM vs DeepAR vs Chronos2](results/plots/benchmark_lstm_deepar_chronos2.png)
+![Benchmark: LSTM vs DeepAR vs Chronos2](results/plots/benchmark_lstm_deepar_chronos2_data_1to7.png)
 
 
 ## References

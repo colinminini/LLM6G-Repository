@@ -26,8 +26,8 @@ class RupturesPeltDetector(ChangePointDetector):
     def __init__(
         self,
         model: str = "normal",
-        penalty: float = 3.0,
-        min_size: int = 3,
+        penalty: float = 15.0,
+        min_size: int = 10,
         jump: int = 1,
     ) -> None:
         self.model = model
@@ -83,8 +83,8 @@ def detect_first_change_point(
     """Convenience wrapper for first change-point detection using PELT."""
     detector = RupturesPeltDetector(
         model=str(kwargs.pop("model", "normal")),
-        penalty=float(kwargs.pop("penalty", 3.0)),
-        min_size=int(kwargs.pop("min_size", 3)),
+        penalty=float(kwargs.pop("penalty", 15.0)),
+        min_size=int(kwargs.pop("min_size", 10)),
         jump=int(kwargs.pop("jump", 1)),
     )
     return detector.detect_first_change_point(timeseries_array, **kwargs)

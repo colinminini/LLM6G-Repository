@@ -1,23 +1,22 @@
 {
-  "timestamp_utc": "2026-02-28T15:31:30.515458+00:00",
+  "timestamp_utc": "2026-03-10T14:01:17.040905+00:00",
   "dataset_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/data/data_1to7.csv",
   "sampling_mode": "random",
   "paired_random_windows": true,
   "forecaster_quantiles": [
-    0.1,
     0.5,
-    0.9
+    0.95
   ],
   "chronos_num_samples": 100,
   "models": {
-    "chronos2": {
+    "lstm": {
       "metrics": {
-        "model": "chronos2",
-        "timestamp_utc": "2026-02-28T15:33:27.714195+00:00",
+        "model": "lstm",
+        "timestamp_utc": "2026-03-10T14:01:58.622597+00:00",
         "dataset_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/data/data_1to7.csv",
         "horizon": 48,
-        "context_length": 256,
-        "evaluation_start_index": 256,
+        "context_length": 48,
+        "evaluation_start_index": 48,
         "sampling_mode": "random",
         "random_windows_per_series": 50,
         "random_seed": 42,
@@ -26,26 +25,107 @@
         "window_step": 1,
         "max_windows_per_series": null,
         "num_series": 86,
-        "num_rows_dataset": 1148,
+        "num_rows_dataset": 1351,
         "num_windows_total": 4300,
-        "MAE_CP": 7.366279069767442,
+        "MAE_CP": 27.506511627906978,
         "tolerance": 3,
-        "tolerance_hit_rate": 0.5381395348837209,
-        "coverage_rate": 0.9121370733234913,
-        "sharpness": 1.4054940764792947,
+        "tolerance_hit_rate": 0.09046511627906977,
+        "coverage_rate": 0.9942180116321337,
+        "sharpness": 7.9382135087178884,
         "bound_definition": "safe_ceiling=max(y_pred_95[0:tau_pred])",
         "forecaster_quantiles": [
-          0.1,
           0.5,
-          0.9
+          0.95
         ],
         "chronos_num_samples": 100,
         "lstm_residual_sigma": null,
         "cp_detector": {
           "method": "ruptures_pelt",
           "model": "normal",
-          "penalty": 3.0,
-          "min_size": 3,
+          "penalty": 15.0,
+          "min_size": 10,
+          "jump": 1
+        }
+      },
+      "metrics_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/lstm_metrics.json",
+      "windows_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/lstm_window_metrics.csv"
+    },
+    "deepar": {
+      "metrics": {
+        "model": "deepar",
+        "timestamp_utc": "2026-03-10T14:02:38.923117+00:00",
+        "dataset_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/data/data_1to7.csv",
+        "horizon": 48,
+        "context_length": 48,
+        "evaluation_start_index": 48,
+        "sampling_mode": "random",
+        "random_windows_per_series": 50,
+        "random_seed": 42,
+        "random_with_replacement": true,
+        "paired_random_windows": true,
+        "window_step": 1,
+        "max_windows_per_series": null,
+        "num_series": 86,
+        "num_rows_dataset": 1351,
+        "num_windows_total": 4300,
+        "MAE_CP": 9.885813953488372,
+        "tolerance": 3,
+        "tolerance_hit_rate": 0.3776744186046512,
+        "coverage_rate": 0.9460650672482733,
+        "sharpness": 2.04293068265731,
+        "bound_definition": "safe_ceiling=max(y_pred_95[0:tau_pred])",
+        "forecaster_quantiles": [
+          0.5,
+          0.95
+        ],
+        "chronos_num_samples": 100,
+        "lstm_residual_sigma": null,
+        "cp_detector": {
+          "method": "ruptures_pelt",
+          "model": "normal",
+          "penalty": 15.0,
+          "min_size": 10,
+          "jump": 1
+        }
+      },
+      "metrics_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/deepar_metrics.json",
+      "windows_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/deepar_window_metrics.csv"
+    },
+    "chronos2": {
+      "metrics": {
+        "model": "chronos2",
+        "timestamp_utc": "2026-03-10T14:04:39.056298+00:00",
+        "dataset_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/data/data_1to7.csv",
+        "horizon": 48,
+        "context_length": 48,
+        "evaluation_start_index": 48,
+        "sampling_mode": "random",
+        "random_windows_per_series": 50,
+        "random_seed": 42,
+        "random_with_replacement": true,
+        "paired_random_windows": true,
+        "window_step": 1,
+        "max_windows_per_series": null,
+        "num_series": 86,
+        "num_rows_dataset": 1351,
+        "num_windows_total": 4300,
+        "MAE_CP": 10.584186046511627,
+        "tolerance": 3,
+        "tolerance_hit_rate": 0.3118604651162791,
+        "coverage_rate": 0.9560046346782988,
+        "sharpness": 3.7702548055451275,
+        "bound_definition": "safe_ceiling=max(y_pred_95[0:tau_pred])",
+        "forecaster_quantiles": [
+          0.5,
+          0.95
+        ],
+        "chronos_num_samples": 100,
+        "lstm_residual_sigma": null,
+        "cp_detector": {
+          "method": "ruptures_pelt",
+          "model": "normal",
+          "penalty": 15.0,
+          "min_size": 10,
           "jump": 1
         }
       },

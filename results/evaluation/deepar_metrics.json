@@ -1,6 +1,6 @@
 {
   "model": "deepar",
-  "timestamp_utc": "2026-02-28T14:20:35.761086+00:00",
+  "timestamp_utc": "2026-03-10T14:02:38.923117+00:00",
   "dataset_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/data/data_1to7.csv",
   "horizon": 48,
   "context_length": 48,
@@ -13,26 +13,25 @@
   "window_step": 1,
   "max_windows_per_series": null,
   "num_series": 86,
-  "num_rows_dataset": 1148,
+  "num_rows_dataset": 1351,
   "num_windows_total": 4300,
-  "MAE_CP": 6.8967441860465115,
+  "MAE_CP": 9.885813953488372,
   "tolerance": 3,
-  "tolerance_hit_rate": 0.587906976744186,
-  "coverage_rate": 0.9519373034954688,
-  "sharpness": 1.38348219984652,
+  "tolerance_hit_rate": 0.3776744186046512,
+  "coverage_rate": 0.9460650672482733,
+  "sharpness": 2.04293068265731,
   "bound_definition": "safe_ceiling=max(y_pred_95[0:tau_pred])",
   "forecaster_quantiles": [
-    0.1,
     0.5,
-    0.9
+    0.95
   ],
   "chronos_num_samples": 100,
   "lstm_residual_sigma": null,
   "cp_detector": {
     "method": "ruptures_pelt",
     "model": "normal",
-    "penalty": 3.0,
-    "min_size": 3,
+    "penalty": 15.0,
+    "min_size": 10,
     "jump": 1
   }
 }

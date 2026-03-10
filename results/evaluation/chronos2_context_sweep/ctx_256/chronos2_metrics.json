@@ -1,6 +1,6 @@
 {
   "model": "chronos2",
-  "timestamp_utc": "2026-02-28T15:52:55.111482+00:00",
+  "timestamp_utc": "2026-03-10T14:38:12.279803+00:00",
   "dataset_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/data/data_1to7.csv",
   "horizon": 48,
   "context_length": 256,
@@ -13,13 +13,13 @@
   "window_step": 1,
   "max_windows_per_series": null,
   "num_series": 86,
-  "num_rows_dataset": 1148,
+  "num_rows_dataset": 1351,
   "num_windows_total": 4300,
-  "MAE_CP": 7.332093023255814,
+  "MAE_CP": 10.581395348837209,
   "tolerance": 3,
-  "tolerance_hit_rate": 0.5504651162790698,
-  "coverage_rate": 0.9126436269706957,
-  "sharpness": 1.5347740023034773,
+  "tolerance_hit_rate": 0.32209302325581396,
+  "coverage_rate": 0.9573434302535538,
+  "sharpness": 3.6268556553798668,
   "bound_definition": "safe_ceiling=max(y_pred_95[0:tau_pred])",
   "forecaster_quantiles": [
     0.1,
@@ -31,8 +31,8 @@
   "cp_detector": {
     "method": "ruptures_pelt",
     "model": "normal",
-    "penalty": 3.0,
-    "min_size": 3,
+    "penalty": 15.0,
+    "min_size": 10,
     "jump": 1
   }
 }

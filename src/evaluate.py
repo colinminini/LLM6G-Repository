@@ -456,8 +456,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tolerance", type=int, default=3)
 
     parser.add_argument("--cp-model", default="normal")
-    parser.add_argument("--cp-penalty", type=float, default=3.0)
-    parser.add_argument("--cp-min-size", type=int, default=3)
+    parser.add_argument("--cp-penalty", type=float, default=15.0)
+    parser.add_argument("--cp-min-size", type=int, default=10)
     parser.add_argument("--cp-jump", type=int, default=1)
 
     parser.add_argument(

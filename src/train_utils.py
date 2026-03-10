@@ -11,13 +11,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
+import pandas as pd
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+if __package__ in {None, ""}:
+    import sys
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 from src.loader import DataLoaderConfig, build_dataloaders
 from src.models import DeepARForecast, LSTMForecast, TFTForecast
+from src.utils.build_datasets import write_splits
 
 
 @dataclass
@@ -34,9 +41,12 @@ class TrainerConfig:
 _DATASET_ALIASES = {
     "1to7": "data_1to7",
     "1_to_7": "data_1to7",
+    "1_to7": "data_1to7",
     "data_1to7": "data_1to7",
+    "data_1_to7": "data_1to7",
     "data_1_to_7": "data_1to7",
 }
+_SUPPORTED_MODEL_TYPES = ("lstm", "deepar", "tft")
 
 
 def _format_quantile_key(q: float) -> str:
@@ -630,13 +640,79 @@ def _normalize_dataset_base(dataset_base: str) -> str:
         return _DATASET_ALIASES[base]
     raise ValueError(
         "Only the 1_to_7 dataset is supported for training. "
-        "Use one of: data_1to7, data_1_to_7, 1to7, 1_to_7."
+        "Use one of: data_1to7, data_1_to7, data_1_to_7, 1to7, 1_to7, 1_to_7."
+    )
+
+
+def _parse_model_types(raw: str) -> list[str]:
+    parts = [part.strip().lower() for part in raw.split(",") if part.strip()]
+    if not parts:
+        raise ValueError("No model type provided.")
+    if len(parts) == 1 and parts[0] == "all":
+        return list(_SUPPORTED_MODEL_TYPES)
+    invalid = [part for part in parts if part not in _SUPPORTED_MODEL_TYPES]
+    if invalid:
+        raise ValueError(
+            f"Unsupported model type(s): {', '.join(invalid)}. "
+            f"Use one or more of: {', '.join(_SUPPORTED_MODEL_TYPES)}, or 'all'."
+        )
+    return parts
+
+
+def _resolve_full_dataset_path(dataset_base: str, explicit_path: str | Path | None) -> Path:
+    if explicit_path is not None:
+        return Path(explicit_path)
+    if dataset_base == "data_1to7":
+        candidates = [
+            Path("data/data_1to7.csv"),
+            Path("data/data_1_to7.csv"),
+            Path("data/data_1_to_7.csv"),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
+    return Path("data") / f"{dataset_base}.csv"
+
+
+def _refresh_dataset_splits(
+    *,
+    dataset_base: str,
+    full_data_path: Path,
+    dataset_dir: Path,
+) -> None:
+    if not full_data_path.exists():
+        raise FileNotFoundError(
+            f"Full dataset CSV not found: {full_data_path}. "
+            "Update --full-data-path or place the CSV at this location."
+        )
+
+    dataset = pd.read_csv(full_data_path)
+    if "timestamp" not in dataset.columns:
+        raise ValueError(
+            f"{full_data_path} must contain a 'timestamp' column."
+        )
+    if dataset.drop(columns=["timestamp"]).isna().any().any():
+        raise ValueError(
+            f"{full_data_path} contains NaN values in series columns. "
+            "Clean the full dataset before retraining."
+        )
+
+    write_splits(dataset, dataset_dir, dataset_base)
+    print(
+        "Refreshed training splits from "
+        f"{full_data_path} -> {dataset_dir / f'{dataset_base}_train.csv'}, "
+        f"{dataset_dir / f'{dataset_base}_val.csv'}, "
+        f"{dataset_dir / f'{dataset_base}_test.csv'}"
     )
 
 
 def train_model(
     model_type: str = "lstm",
     dataset_base: str = "data_1to7",
+    full_data_path: str | Path | None = None,
+    dataset_dir: str | Path = Path("data/datasets"),
+    refresh_splits: bool = True,
     context_length: int = 128,
     forecast_length: int = 1,
     batch_size: int = 64,
@@ -650,12 +726,22 @@ def train_model(
 ) -> Dict[str, list[float]]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset_base = _normalize_dataset_base(dataset_base)
+    dataset_dir = Path(dataset_dir)
+    full_data_path = _resolve_full_dataset_path(dataset_base, full_data_path)
     model_type = model_type.lower()
-    if model_type not in {"lstm", "deepar", "tft"}:
+    if model_type not in _SUPPORTED_MODEL_TYPES:
         raise ValueError("model_type must be one of: lstm, deepar, tft.")
+
+    if refresh_splits:
+        _refresh_dataset_splits(
+            dataset_base=dataset_base,
+            full_data_path=full_data_path,
+            dataset_dir=dataset_dir,
+        )
 
     data_cfg = DataLoaderConfig(
         dataset_base=dataset_base,
+        data_dir=dataset_dir,
         context_length=context_length,
         forecast_length=forecast_length,
         batch_size=batch_size,
@@ -736,6 +822,9 @@ def train_all(
     model_types: Sequence[str],
     dataset_base: str,
     *,
+    full_data_path: str | Path | None = None,
+    dataset_dir: str | Path = Path("data/datasets"),
+    refresh_splits: bool = True,
     context_length: int,
     forecast_length: int,
     quantiles: Sequence[float],
@@ -747,10 +836,13 @@ def train_all(
 ) -> tuple[Dict[tuple[str, str], Dict[str, float]], Dict[tuple[str, str], Dict[str, list[float]]]]:
     train_results: Dict[tuple[str, str], Dict[str, float]] = {}
     train_histories: Dict[tuple[str, str], Dict[str, list[float]]] = {}
-    for model in model_types:
+    for idx, model in enumerate(model_types):
         history = train_model(
             model_type=model,
             dataset_base=dataset_base,
+            full_data_path=full_data_path,
+            dataset_dir=dataset_dir,
+            refresh_splits=bool(refresh_splits and idx == 0),
             context_length=context_length,
             forecast_length=forecast_length,
             quantiles=quantiles,
@@ -784,9 +876,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-type",
         default="lstm",
-        help="Model family to train: lstm, deepar, or tft.",
+        help=(
+            "Model family to train: lstm, deepar, or tft. "
+            "Can also be a comma-separated list or 'all'."
+        ),
+    )
+    parser.add_argument(
+        "--models",
+        default=None,
+        help="Optional alias for --model-type (supports comma-separated values and 'all').",
     )
     parser.add_argument("--dataset-base", default="data_1to7")
+    parser.add_argument(
+        "--full-data-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional full dataset CSV used to regenerate train/val/test splits before "
+            "training. If omitted, the script auto-detects among "
+            "data/data_1to7.csv, data/data_1_to7.csv, data/data_1_to_7.csv."
+        ),
+    )
+    parser.add_argument(
+        "--dataset-dir",
+        type=Path,
+        default=Path("data/datasets"),
+        help="Directory where split CSVs are written/read for training.",
+    )
+    parser.add_argument(
+        "--no-refresh-splits",
+        action="store_true",
+        help="Skip regenerating split CSVs from --full-data-path before training.",
+    )
     parser.add_argument("--context-length", type=int, default=128)
     parser.add_argument("--forecast-length", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -811,9 +932,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    model_types = _parse_model_types(args.models or args.model_type)
     common = dict(
-        model_type=args.model_type,
         dataset_base=args.dataset_base,
+        full_data_path=args.full_data_path,
+        dataset_dir=args.dataset_dir,
+        refresh_splits=not args.no_refresh_splits,
         context_length=args.context_length,
         forecast_length=args.forecast_length,
         batch_size=args.batch_size,
@@ -825,7 +949,14 @@ def main() -> None:
         num_heads=args.num_heads,
         quantiles=_parse_quantiles(args.quantiles),
     )
-    train_model(**common)
+    for idx, model_type in enumerate(model_types):
+        # Split refresh is only needed once when training multiple models in one run.
+        run_common = dict(common)
+        run_common["model_type"] = model_type
+        if idx > 0:
+            run_common["refresh_splits"] = False
+        print(f"Training model: {model_type}")
+        train_model(**run_common)
 
 
 if __name__ == "__main__":

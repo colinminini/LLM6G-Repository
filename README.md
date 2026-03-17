@@ -158,6 +158,48 @@ The continuous input space is discretized into tokens, called bins.
 ![Chronos-2 Context Sweep Benchmark](results/plots/benchmark_chronos2_context_sweep_48_to_512.png)
 
 
+## Top Module (19/03)
+- Corrected the LSTM quantile-loading bug in `src/pipeline.py`: the checkpoint adapter was reshaping the saved head output with an ambiguous `(forecast_length, num_quantiles)` geometry, which corrupted the LSTM `q50` path in `system_eval`. The loader now respects the explicit eval horizon/quantiles, so the multi-step quantile trajectories are consistent again.
+- Change-point detector hyperparameter sweep on top of the saved `system_eval` forecasts:
+  we added `src/cp_sweep.py` and `notebooks/cp_hyperparameter_sweep.ipynb` to sweep `ruptures` PELT settings over the already-saved probabilistic windows (`4300` paired windows/model on `data/data_1to7.csv`) without rerunning the forecasters.
+- Sweep grid:
+  `model='normal'`, `jump=1`, `penalty in {10, 15, 20}`, `min_size in {8, 10, 12}`.
+- Result:
+  the shared setting `cp_penalty=10`, `cp_min_size=8`, `cp_jump=1` is the best global choice across `LSTM`, `DeepAR`, and `Chronos2`: it improves both `MAE_CP` and tolerance hit rate for all three systems while keeping coverage essentially unchanged.
+- Main system-eval defaults were updated accordingly:
+  `cp_penalty=10`, `cp_min_size=8`, `cp_jump=1` in `src/evaluate.py`, and the main `notebooks/system_eval.ipynb` now uses the same tuned detector.
+
+![Change-Point Hyperparameter Sweep Heatmaps](results/plots/cp_hyperparameter_sweep_heatmaps.png)
+
+- Post-hoc `tau` calibration experiment on top of the tuned saved windows:
+  we added `src/tau_calibration.py` and `notebooks/tau_calibration_experiment.ipynb` to learn a correction from saved per-window forecasts and history features (`q50`, `q95`, width, local CP-shape features, history statistics, calendar features, per-series stats) using chronological train/val/test splits.
+- How the calibration modules were trained:
+  they were not trained on the original raw forecasting targets directly; instead we reused the saved `system_eval` windows from `results/evaluation/*_window_metrics.csv` built on `data/data_1to7.csv`, reconstructed each window’s history/future segment, recomputed `tau_pred` and `tau_true` with the tuned CP detector, and then split windows chronologically by `start_index` into `60% train / 20% val / 20% test` before fitting the post-hoc regressors/offset models.
+- Calibration result and interpretation:
+  the comparison plot below shows the main tradeoff clearly: several calibrators can reduce CP timing error, but the best technique depends on which system metric we prioritize.
+  `DeepAR` benefits the most cleanly from post-hoc calibration, and a simple global offset is already strong; `Chronos2` also benefits, but feature-based models mainly help if we optimize for lower `MAE_CP`, while a simpler offset is more stable for tolerance-hit rate.
+  `LSTM` is the most delicate case: feature-based correction can improve CP timing error, but it tends to over-correct and lose tolerance-hit accuracy, so raw `tau` or only a mild offset remains the safer operating point.
+
+![Tau Calibration Test Comparison](results/plots/tau_calibration_test_comparison.png)
+
+- All-techniques view:
+  the heatmaps below compare every tested bias-correction technique on the test split. They show that tree-based regressors are often the most aggressive in reducing `MAE_CP`, while offset-based methods are usually more conservative and preserve the system behaviour better.
+  This is why the final recommendation is model-dependent instead of adopting one universal calibrator for all systems.
+
+![Tau Calibration All Techniques](results/plots/tau_calibration_all_techniques_heatmaps.png)
+
+- Feature interpretation:
+  when a feature-based calibrator is selected, the importance plot shows that the dominant signals are still the original predicted break point (`tau_pred_raw`, `tau_pred_norm`) plus local path-shape features around the predicted change (`q50`/width jumps) and recent history statistics.
+  In other words, the calibrator is mostly refining the detector’s output rather than discovering an unrelated change-point signal from scratch.
+
+![Tau Calibration Feature Importances](results/plots/tau_calibration_feature_importances.png)
+- Saved calibration artifacts:
+  metrics and predictions are under `results/evaluation/tau_calibration/`;
+  comparison plot: `results/plots/tau_calibration_test_comparison.png`;
+  all-techniques plot: `results/plots/tau_calibration_all_techniques_heatmaps.png`;
+  feature-importance plot: `results/plots/tau_calibration_feature_importances.png`.
+
+
 ## References
 - [1] A. F. Ansari et al., “Chronos-2: From Univariate to Universal Forecasting,” arXiv:2510.15821, 2025. (`sources/Chronos-2.pdf`)
 - [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`sources/KTH.pdf`)

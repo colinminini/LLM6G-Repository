@@ -1,0 +1,32 @@
+{
+  "timestamp_utc": "2026-03-17T15:30:42.166733+00:00",
+  "data_path": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/data/data_1to7.csv",
+  "input_dir": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation",
+  "output_dir": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/cp_hyperparameter_sweep",
+  "models": [
+    "lstm",
+    "deepar",
+    "chronos2"
+  ],
+  "cp_models": [
+    "normal"
+  ],
+  "cp_penalties": [
+    10.0,
+    15.0,
+    20.0
+  ],
+  "cp_min_sizes": [
+    8,
+    10,
+    12
+  ],
+  "cp_jumps": [
+    1
+  ],
+  "tolerance": 3,
+  "coverage_target": 0.95,
+  "num_configs_per_model": 9,
+  "summary_csv": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/cp_hyperparameter_sweep/cp_sweep_summary.csv",
+  "best_configs_csv": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/evaluation/cp_hyperparameter_sweep/cp_sweep_best_configs.csv"
+}

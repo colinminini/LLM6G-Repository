@@ -86,12 +86,37 @@ class TorchCheckpointForecaster(Forecaster):
     ) -> int:
         if self.model_type == "lstm":
             out_dim = int(state_dict["head.weight"].shape[0])
-            for num_q in (3, 2, 5, 4, 7, 9, 1):
-                if out_dim % num_q == 0:
-                    return out_dim // num_q
-            if requested is not None and requested > 0 and out_dim % requested == 0:
-                return int(requested)
-            return out_dim
+            if requested is not None:
+                requested = int(requested)
+                if requested <= 0:
+                    raise ValueError("forecast_length must be positive.")
+                if out_dim % requested == 0:
+                    return requested
+                raise ValueError(
+                    "Requested forecast_length is incompatible with the LSTM checkpoint: "
+                    f"head output dim={out_dim}, requested forecast_length={requested}."
+                )
+
+            num_input_quantiles = len(self.input_quantiles)
+            if num_input_quantiles > 0 and out_dim % num_input_quantiles == 0:
+                return out_dim // num_input_quantiles
+
+            candidate_num_quantiles = (1, 2, 3, 4, 5, 7, 9)
+            candidate_lengths = sorted(
+                {
+                    out_dim // num_q
+                    for num_q in candidate_num_quantiles
+                    if out_dim % num_q == 0
+                }
+            )
+            if len(candidate_lengths) == 1:
+                return candidate_lengths[0]
+
+            raise ValueError(
+                "Cannot infer LSTM forecast_length unambiguously from the checkpoint. "
+                f"head output dim={out_dim}, candidate forecast lengths={candidate_lengths}. "
+                "Pass the training forecast_length explicitly."
+            )
 
         return int(requested) if requested is not None else 16
 
@@ -143,6 +168,11 @@ class TorchCheckpointForecaster(Forecaster):
         output_quantiles: tuple[float, ...]
         if self.model_type == "lstm":
             out_dim = int(state_dict["head.weight"].shape[0])
+            if out_dim % self.forecast_length != 0:
+                raise ValueError(
+                    "LSTM checkpoint output dim is not divisible by forecast_length: "
+                    f"out_dim={out_dim}, forecast_length={self.forecast_length}."
+                )
             num_quantiles = max(1, out_dim // self.forecast_length)
             if len(self.input_quantiles) == num_quantiles:
                 output_quantiles = self.input_quantiles

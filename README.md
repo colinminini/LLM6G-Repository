@@ -198,7 +198,26 @@ The continuous input space is discretized into tokens, called bins.
   comparison plot: `results/plots/tau_calibration_test_comparison.png`;
   all-techniques plot: `results/plots/tau_calibration_all_techniques_heatmaps.png`;
   feature-importance plot: `results/plots/tau_calibration_feature_importances.png`.
+- Features used by the post-hoc tau calibration module:
+  `tau_pred_raw`, `tau_pred_norm`, `tau_pred_is_horizon`, `tau_pred_is_zero`, `safe_ceiling_raw`.
+  These encode the raw detector output itself, whether it collapsed to an edge case, and the ceiling implied by the uncorrected break point.
+  `tau_pred_norm = tau_pred_raw / horizon`, so it tells the calibrator whether the predicted break happens early or late relative to the forecast window.
+- Forecast-path level features on `q0.5` and `q0.95`:
+  `y50_*` and `y95_*` summarize the predicted median and upper quantile over the full horizon with first/last value, mean, std, min/max, range, quantiles, slope, total delta, pointwise variation, early-vs-late gap, and where the extrema occur.
+- Uncertainty-width features:
+  `width_*` is built from `q0.95 - q0.5` and captures how much uncertainty the forecaster has, whether that uncertainty grows or shrinks over the horizon, and how volatile that width profile is.
+- Local shape features around the predicted break:
+  `y50_before_tau_mean`, `y50_after_tau_mean`, `y50_post_pre_gap`, `y50_at_tau`, `y50_prev_tau`, `y50_next_tau`, `y50_jump_tau`, plus the matching `width_*_tau` features describe what the forecast and the uncertainty look like exactly around the detected change-point.
+- History-context features:
+  `hist_*` summarizes the input context window seen by the forecaster with level, spread, quantiles, trend, recent trend on the last 10/20 steps, diff statistics, zero fraction, lag-1 autocorrelation, and how unusual the latest observed value is versus the recent past.
+- Forecast-vs-history transition features:
+  `hist_last_minus_y50_first` and `hist_last_minus_y95_first` measure the jump between the end of the observed context and the first step of the predicted horizon.
+- Calendar features:
+  `calendar_hour`, `calendar_minute`, `calendar_second`, `calendar_dayofweek`, `calendar_day_sin/cos`, and `calendar_week_sin/cos` let the calibrator exploit time-of-day and day-of-week structure in when change-points tend to happen.
+- Series identity and global series statistics:
+  `series` is one-hot encoded so the module can learn per-cell behavior, and `series_global_mean`, `series_global_std`, `series_global_q90`, `series_global_zero_frac` provide a long-run profile of each traffic series.
 
+https://www.ieee-fine.org/2026/
 
 ## References
 - [1] A. F. Ansari et al., “Chronos-2: From Univariate to Universal Forecasting,” arXiv:2510.15821, 2025. (`sources/Chronos-2.pdf`)

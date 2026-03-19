@@ -220,5 +220,5 @@ The continuous input space is discretized into tokens, called bins.
 https://www.ieee-fine.org/2026/
 
 ## References
-- [1] A. F. Ansari et al., “Chronos-2: From Univariate to Universal Forecasting,” arXiv:2510.15821, 2025. (`sources/Chronos-2.pdf`)
-- [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`sources/KTH.pdf`)
+- [1] A. F. Ansari et al., “Chronos-2: From Univariate to Universal Forecasting,” arXiv:2510.15821, 2025. (`references/Chronos-2.pdf`)
+- [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`references/KTH.pdf`)

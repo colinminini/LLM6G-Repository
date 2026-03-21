@@ -13,6 +13,7 @@ Forecasting per-sector traffic to support energy-aware radio access networks usi
   1. `python src/run_experiment.py --data-path data/data_1to672.csv --context-length 48 --horizon 48 --models lstm,deepar,chronos2`
   2. open `notebooks/experiment_report.ipynb` and set `EXPERIMENT_DIR` to the generated run directory.
 - The runner executes `prepare_data -> train -> forecast_eval -> system_eval -> cp_sweep -> tau_calibration`, prints stage progress in the terminal, and writes plots plus machine-readable summaries under `results/experiments/.../reports/`.
+- After each successful stage, the runner also republishes lightweight README-facing PNGs from the current report bundle under `results/plots/readme/`.
 - The individual stage scripts under `src/` remain available for debugging or partial reruns, but they are now the implementation backbone rather than the recommended entrypoint.
 - `LSTM` and `DeepAR` are the trainable baselines in the main path. `Chronos-2` is evaluated zero-shot only.
 - `TFT` and `Chronos-2` fine-tuning are retained only as legacy/archival code paths.
@@ -162,7 +163,9 @@ The continuous input space is discretized into tokens, called bins.
 - Expected tradeoff:
   we suspect Chronos2 could improve with a larger context window, but we do not increase it in these benchmark plots because the DL baselines (`LSTM`, `DeepAR`) are trained/evaluated with the shared constrained setup.
 
-![System Eval Example](results/plots/system_eval_example.png)
+![Forecast Example (Chronos-2)](results/plots/readme/forecast_example_chronos2_test.png)
+
+![Pipeline Example (Chronos-2)](results/plots/readme/pipeline_example_chronos2_test.png)
 
 ![Benchmark: LSTM vs DeepAR vs Chronos2](results/plots/benchmark_lstm_deepar_chronos2_data_1to7.png)
 
@@ -186,7 +189,7 @@ The continuous input space is discretized into tokens, called bins.
 - Main system-eval defaults were updated accordingly:
   `cp_penalty=10`, `cp_min_size=8`, `cp_jump=1` in `src/evaluate.py`, and the archived `notebooks/legacy/system_eval.ipynb` used the same tuned detector before the runner/report refactor.
 
-![Change-Point Hyperparameter Sweep Heatmaps](results/plots/cp_hyperparameter_sweep_heatmaps.png)
+![Change-Point Hyperparameter Sweep Heatmaps](results/plots/readme/cp_sweep_val.png)
 
 - Post-hoc `tau` calibration experiment on top of the tuned saved windows:
   we added `src/tau_calibration.py` and the archived `notebooks/legacy/tau_calibration_experiment.ipynb` to learn a correction from saved per-window forecasts and history features (`q50`, `q95`, width, local CP-shape features, history statistics, calendar features, per-series stats) using chronological train/val/test splits.
@@ -197,7 +200,7 @@ The continuous input space is discretized into tokens, called bins.
   `DeepAR` benefits the most cleanly from post-hoc calibration, and a simple global offset is already strong; `Chronos2` also benefits, but feature-based models mainly help if we optimize for lower `MAE_CP`, while a simpler offset is more stable for tolerance-hit rate.
   `LSTM` is the most delicate case: feature-based correction can improve CP timing error, but it tends to over-correct and lose tolerance-hit accuracy, so raw `tau` or only a mild offset remains the safer operating point.
 
-![Tau Calibration Test Comparison](results/plots/tau_calibration_test_comparison.png)
+![Tau Calibration Test Comparison](results/plots/readme/tau_calibration_test.png)
 
 - All-techniques view:
   the heatmaps below compare every tested bias-correction technique on the test split. They show that tree-based regressors are often the most aggressive in reducing `MAE_CP`, while offset-based methods are usually more conservative and preserve the system behaviour better.
@@ -209,12 +212,12 @@ The continuous input space is discretized into tokens, called bins.
   when a feature-based calibrator is selected, the importance plot shows that the dominant signals are still the original predicted break point (`tau_pred_raw`, `tau_pred_norm`) plus local path-shape features around the predicted change (`q50`/width jumps) and recent history statistics.
   In other words, the calibrator is mostly refining the detector’s output rather than discovering an unrelated change-point signal from scratch.
 
-![Tau Calibration Feature Importances](results/plots/tau_calibration_feature_importances.png)
+![Tau Calibration Feature Importances](results/plots/readme/tau_calibration_feature_importance.png)
 - Saved calibration artifacts:
   metrics and predictions are under `results/evaluation/tau_calibration/`;
-  comparison plot: `results/plots/tau_calibration_test_comparison.png`;
+  comparison plot: `results/plots/readme/tau_calibration_test.png`;
   all-techniques plot: `results/plots/tau_calibration_all_techniques_heatmaps.png`;
-  feature-importance plot: `results/plots/tau_calibration_feature_importances.png`.
+  feature-importance plot: `results/plots/readme/tau_calibration_feature_importance.png`.
 - Features used by the post-hoc tau calibration module:
   `tau_pred_raw`, `tau_pred_norm`, `tau_pred_is_horizon`, `tau_pred_is_zero`, `safe_ceiling_raw`.
   These encode the raw detector output itself, whether it collapsed to an edge case, and the ceiling implied by the uncorrected break point.

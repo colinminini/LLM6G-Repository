@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -21,6 +23,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+README_PLOTS_DIR = REPO_ROOT / "results" / "plots" / "readme"
+PREFERRED_EXAMPLE_MODEL = "chronos2"
+PUBLISHED_FILENAME_OVERRIDES = {
+    "example_windows_test_plot": "forecast_example_chronos2_test.png",
+    "example_windows_system_eval_test_plot": "pipeline_example_chronos2_test.png",
+}
 
 
 def _ensure_dir(path: str | Path) -> Path:
@@ -40,6 +50,107 @@ def _save_figure(fig: plt.Figure, path: str | Path) -> Path:
     fig.savefig(out, dpi=160, bbox_inches="tight")
     plt.close(fig)
     return out
+
+
+def _preferred_model_order(
+    models: Sequence[str],
+    *,
+    preferred_model: str = PREFERRED_EXAMPLE_MODEL,
+) -> list[str]:
+    ordered: list[str] = []
+    for model_name in (preferred_model, *models):
+        normalized = str(model_name)
+        if normalized not in ordered:
+            ordered.append(normalized)
+    return ordered
+
+
+def _resolve_repo_relative(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _select_example_window_row(
+    window_dir: str | Path,
+    *,
+    window_suffix: str,
+    models: Sequence[str] = ("lstm", "deepar", "chronos2"),
+    preferred_model: str = PREFERRED_EXAMPLE_MODEL,
+) -> tuple[str, pd.Series] | None:
+    window_dir = Path(window_dir)
+    checked_models: set[str] = set()
+    for model_name in _preferred_model_order(models, preferred_model=preferred_model):
+        checked_models.add(model_name)
+        path = window_dir / f"{model_name}_{window_suffix}.csv"
+        if not path.exists():
+            continue
+        df = pd.read_csv(path)
+        if not df.empty:
+            return model_name, df.iloc[0]
+
+    for path in sorted(window_dir.glob(f"*_{window_suffix}.csv")):
+        model_name = path.name[: -len(f"_{window_suffix}.csv")]
+        if model_name in checked_models:
+            continue
+        df = pd.read_csv(path)
+        if not df.empty:
+            return model_name, df.iloc[0]
+    return None
+
+
+def _parse_json_series(value: Any) -> np.ndarray:
+    return np.asarray(json.loads(value), dtype=float)
+
+
+def _published_plot_name(artifact_name: str, source_path: Path) -> str:
+    return PUBLISHED_FILENAME_OVERRIDES.get(artifact_name, source_path.name)
+
+
+def publish_report_plots(
+    experiment_dir: str | Path,
+    *,
+    publish_dir: str | Path | None = None,
+) -> dict[str, str]:
+    experiment_dir = Path(experiment_dir)
+    report_index_path = experiment_dir / "reports" / "report_index.json"
+    if not report_index_path.exists():
+        return {}
+
+    report_index = _read_json(report_index_path)
+    published_dir = _ensure_dir(publish_dir or README_PLOTS_DIR)
+    published_outputs: dict[str, str] = {}
+    published_artifacts: dict[str, dict[str, str]] = {}
+    for artifact_name, raw_source_path in sorted(report_index.items()):
+        source_path = Path(raw_source_path)
+        if not source_path.is_absolute():
+            source_path = REPO_ROOT / source_path
+        if source_path.suffix.lower() != ".png" or not source_path.exists():
+            continue
+
+        published_name = _published_plot_name(artifact_name, source_path)
+        published_path = published_dir / published_name
+        shutil.copy2(source_path, published_path)
+        published_outputs[artifact_name] = str(published_path)
+        published_artifacts[artifact_name] = {
+            "source_path": _resolve_repo_relative(source_path),
+            "published_path": _resolve_repo_relative(published_path),
+        }
+
+    manifest_path = published_dir / "published_report_index.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "source_experiment_dir": _resolve_repo_relative(experiment_dir),
+                "published_at_utc": datetime.now(timezone.utc).isoformat(),
+                "artifacts": published_artifacts,
+            },
+            indent=2,
+        )
+    )
+    published_outputs["published_report_index"] = str(manifest_path)
+    return published_outputs
 
 
 def build_prepare_data_report(experiment_dir: str | Path) -> dict[str, str]:
@@ -185,60 +296,44 @@ def build_system_example_window_report(
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     system_dir = experiment_dir / "system_eval" / split
-    available = []
-    for model_name in models:
-        path = system_dir / f"{model_name}_system_windows.csv"
-        if path.exists():
-            df = pd.read_csv(path)
-            if not df.empty:
-                available.append((model_name, df))
-    if not available:
+    selected = _select_example_window_row(
+        system_dir,
+        window_suffix="system_windows",
+        models=models,
+    )
+    if selected is None:
         return {}
 
-    shared = None
-    key_sets = [
-        {(str(row.series), int(row.start_index)) for row in df.itertuples(index=False)}
-        for _, df in available
-    ]
-    common = set.intersection(*key_sets) if len(key_sets) > 1 else key_sets[0]
-    if common:
-        shared = sorted(common)[0]
+    model_name, row = selected
+    history = _parse_json_series(row["history"])
+    future_true = _parse_json_series(row["future_true"])
+    y50 = _parse_json_series(row["y_pred_median"])
+    y95 = _parse_json_series(row["y_pred_95"])
+    tau_pred = int(row["tau_pred"])
+    tau_true = int(row["tau_true"])
+    safe_ceiling = float(row["safe_ceiling"])
 
-    fig, axes = plt.subplots(len(available), 1, figsize=(11, 3.6 * len(available)), sharex=True)
-    axes_arr = np.atleast_1d(axes)
-    for ax, (model_name, df) in zip(axes_arr, available):
-        if shared is not None:
-            row = df[(df["series"] == shared[0]) & (df["start_index"] == shared[1])].iloc[0]
-        else:
-            row = df.iloc[0]
-        history = np.asarray(json.loads(row["history"]), dtype=float)
-        future_true = np.asarray(json.loads(row["future_true"]), dtype=float)
-        y50 = np.asarray(json.loads(row["y_pred_median"]), dtype=float)
-        y95 = np.asarray(json.loads(row["y_pred_95"]), dtype=float)
-        tau_pred = int(row["tau_pred"])
-        tau_true = int(row["tau_true"])
-        safe_ceiling = float(row["safe_ceiling"])
-
-        x_hist = np.arange(history.size)
-        x_future = np.arange(history.size, history.size + future_true.size)
-        ax.plot(x_hist, history, label="history", color="#444444")
-        ax.plot(x_future, future_true, label="future_true", color="#000000")
-        ax.plot(x_future, y50, label="q50", color="#1f77b4")
-        ax.plot(x_future, y95, label="q95", color="#ff7f0e")
-        ax.hlines(
-            safe_ceiling,
-            xmin=x_future[0],
-            xmax=x_future[-1],
-            color="#2ca02c",
-            linestyle="--",
-            linewidth=1.5,
-            label="safe_ceiling",
-        )
-        ax.axvline(history.size + tau_pred, color="#d62728", linestyle="--", linewidth=1.2, label="tau_pred")
-        ax.axvline(history.size + tau_true, color="#9467bd", linestyle=":", linewidth=1.2, label="tau_true")
-        ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
-        ax.grid(alpha=0.3)
-        ax.legend(fontsize=8, ncol=3)
+    fig, ax = plt.subplots(figsize=(11, 4.2))
+    x_hist = np.arange(history.size)
+    x_future = np.arange(history.size, history.size + future_true.size)
+    ax.plot(x_hist, history, label="history", color="#444444")
+    ax.plot(x_future, future_true, label="future_true", color="#000000")
+    ax.plot(x_future, y50, label="q50", color="#1f77b4")
+    ax.plot(x_future, y95, label="q95", color="#ff7f0e")
+    ax.hlines(
+        safe_ceiling,
+        xmin=x_future[0],
+        xmax=x_future[-1],
+        color="#2ca02c",
+        linestyle="--",
+        linewidth=1.5,
+        label="safe_ceiling",
+    )
+    ax.axvline(history.size + tau_pred, color="#d62728", linestyle="--", linewidth=1.2, label="tau_pred")
+    ax.axvline(history.size + tau_true, color="#9467bd", linestyle=":", linewidth=1.2, label="tau_true")
+    ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8, ncol=3)
 
     plot_path = experiment_dir / "reports" / f"example_windows_system_eval_{split}.png"
     _save_figure(fig, plot_path)
@@ -389,46 +484,30 @@ def build_example_window_report(
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     forecast_dir = experiment_dir / "forecast_eval" / split
-    available = []
-    for model_name in models:
-        path = forecast_dir / f"{model_name}_forecast_windows.csv"
-        if path.exists():
-            df = pd.read_csv(path)
-            if not df.empty:
-                available.append((model_name, df))
-    if not available:
+    selected = _select_example_window_row(
+        forecast_dir,
+        window_suffix="forecast_windows",
+        models=models,
+    )
+    if selected is None:
         return {}
 
-    # Pick the first shared window when possible.
-    shared = None
-    key_sets = [
-        {(str(row.series), int(row.start_index)) for row in df.itertuples(index=False)}
-        for _, df in available
-    ]
-    common = set.intersection(*key_sets) if len(key_sets) > 1 else key_sets[0]
-    if common:
-        shared = sorted(common)[0]
+    model_name, row = selected
+    history = _parse_json_series(row["history"])
+    future_true = _parse_json_series(row["future_true"])
+    y50 = _parse_json_series(row["y_pred_median"])
+    y95 = _parse_json_series(row["y_pred_95"])
 
-    fig, axes = plt.subplots(len(available), 1, figsize=(10, 3.2 * len(available)), sharex=True)
-    axes_arr = np.atleast_1d(axes)
-    for ax, (model_name, df) in zip(axes_arr, available):
-        if shared is not None:
-            row = df[(df["series"] == shared[0]) & (df["start_index"] == shared[1])].iloc[0]
-        else:
-            row = df.iloc[0]
-        history = np.asarray(json.loads(row["history"]), dtype=float)
-        future_true = np.asarray(json.loads(row["future_true"]), dtype=float)
-        y50 = np.asarray(json.loads(row["y_pred_median"]), dtype=float)
-        y95 = np.asarray(json.loads(row["y_pred_95"]), dtype=float)
-        x_hist = np.arange(history.size)
-        x_future = np.arange(history.size, history.size + future_true.size)
-        ax.plot(x_hist, history, label="history", color="#444444")
-        ax.plot(x_future, future_true, label="future_true", color="#000000")
-        ax.plot(x_future, y50, label="q50", color="#1f77b4")
-        ax.plot(x_future, y95, label="q95", color="#ff7f0e")
-        ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
-        ax.grid(alpha=0.3)
-        ax.legend(fontsize=8)
+    fig, ax = plt.subplots(figsize=(10, 3.8))
+    x_hist = np.arange(history.size)
+    x_future = np.arange(history.size, history.size + future_true.size)
+    ax.plot(x_hist, history, label="history", color="#444444")
+    ax.plot(x_future, future_true, label="future_true", color="#000000")
+    ax.plot(x_future, y50, label="q50", color="#1f77b4")
+    ax.plot(x_future, y95, label="q95", color="#ff7f0e")
+    ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8)
     plot_path = experiment_dir / "reports" / f"example_windows_{split}.png"
     _save_figure(fig, plot_path)
     return {f"example_windows_{split}_plot": str(plot_path)}

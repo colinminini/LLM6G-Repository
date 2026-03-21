@@ -13,5 +13,7 @@ data/data_instant.csv
 results/benchmarks
 results/experiments/
 results/legacy/
-results/plots/
+results/plots/*
+!results/plots/readme/
+!results/plots/readme/**
 **/events.out.tfevents.*

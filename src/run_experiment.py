@@ -34,6 +34,7 @@ from src.reporting import (
     build_system_eval_report,
     build_tau_calibration_report,
     build_training_report,
+    publish_report_plots,
 )
 
 STAGE_ORDER = (
@@ -524,6 +525,7 @@ def main() -> None:
             subprocess.run(command, cwd=Path(__file__).resolve().parents[1], check=True)
             metrics, plots = _stage_metrics(output_dir, stage)
             report_bundle = build_report_bundle(output_dir)
+            published_plots = publish_report_plots(output_dir)
             elapsed = time.perf_counter() - start_time
             status_payload["stages"][stage] = {
                 "status": "success",
@@ -534,11 +536,14 @@ def main() -> None:
                 "metrics": metrics,
                 "plots": plots,
                 "report_index": report_bundle.get("report_index"),
+                "published_plots": published_plots,
             }
             _save_status(status_path, status_payload)
             print(f"Completed {stage} in {elapsed:.1f}s")
             if metrics:
                 print(f"Headline metrics: {json.dumps(metrics, default=str)[:600]}")
+            if published_plots.get("published_report_index"):
+                print(f"Published README plots: {published_plots['published_report_index']}")
         except subprocess.CalledProcessError as exc:
             elapsed = time.perf_counter() - start_time
             status_payload["stages"][stage] = {

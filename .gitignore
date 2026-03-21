@@ -10,6 +10,8 @@ data/datasets/data_instant_test.csv
 data/datasets/data_instant_train.csv
 data/datasets/data_instant_val.csv
 data/data_instant.csv
+data/raw/
+data/data_tim*
 results/benchmarks
 results/experiments/
 results/legacy/
@@ -17,3 +19,4 @@ results/plots/*
 !results/plots/readme/
 !results/plots/readme/**
 **/events.out.tfevents.*
+paper/

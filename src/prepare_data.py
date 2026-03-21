@@ -23,7 +23,7 @@ from src.experiment import build_experiment_manifest, default_experiment_dir, sa
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Prepare the canonical experiment manifest for data/data_1to672.csv."
+        description="Prepare the experiment manifest for a regular wide time-series CSV."
     )
     parser.add_argument("--data-path", type=Path, default=DEFAULT_DATASET_PATH)
     parser.add_argument("--timestamp-col", default=DEFAULT_TIMESTAMP_COL)
@@ -62,6 +62,7 @@ def main() -> None:
         json.dumps(
             {
                 "manifest_path": str(manifest_path),
+                "cadence": manifest.cadence,
                 "context_length": manifest.context_length,
                 "horizon": manifest.horizon,
                 "quantiles": list(manifest.quantiles),

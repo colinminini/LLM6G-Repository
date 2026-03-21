@@ -132,6 +132,7 @@ def _stage_metrics(output_dir: Path, stage: str) -> tuple[dict[str, Any], dict[s
         manifest = _read_json_if_exists(output_dir / "manifest.json") or {}
         return {
             "dataset_path": manifest.get("dataset_path"),
+            "cadence": manifest.get("cadence"),
             "context_length": manifest.get("context_length"),
             "horizon": manifest.get("horizon"),
             "num_rows": manifest.get("num_rows"),
@@ -394,7 +395,7 @@ def _build_stage_command(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the full canonical experiment flow with progress and saved reports."
+        description="Run the full split-aware experiment flow on any regular wide time-series dataset."
     )
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--manifest-path", type=Path, default=None)

@@ -158,11 +158,17 @@ def build_prepare_data_report(experiment_dir: str | Path) -> dict[str, str]:
     split_summary_path = experiment_dir / "split_summary.csv"
     if not split_summary_path.exists():
         return {}
+    manifest_path = experiment_dir / "manifest.json"
+    manifest = _read_json(manifest_path) if manifest_path.exists() else {}
 
     df = pd.read_csv(split_summary_path)
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.bar(df["split"], df["num_rows"], color=["#1f77b4", "#ff7f0e", "#2ca02c"])
-    ax.set_title("Chronological Split Sizes")
+    cadence = manifest.get("cadence")
+    if cadence:
+        ax.set_title(f"Chronological Split Sizes ({cadence})")
+    else:
+        ax.set_title("Chronological Split Sizes")
     ax.set_ylabel("Rows")
     ax.grid(axis="y", alpha=0.3)
     plot_path = experiment_dir / "reports" / "prepare_data_split_summary.png"
@@ -523,6 +529,16 @@ def build_report_metadata(experiment_dir: str | Path) -> dict[str, str]:
             }
         }
     }
+    manifest_path = experiment_dir / "manifest.json"
+    if manifest_path.exists():
+        manifest = _read_json(manifest_path)
+        metadata["dataset"] = {
+            "dataset_path": manifest.get("dataset_path"),
+            "timestamp_col": manifest.get("timestamp_col"),
+            "cadence": manifest.get("cadence"),
+            "num_rows": manifest.get("num_rows"),
+            "num_series": manifest.get("num_series"),
+        }
 
     comparison_path = experiment_dir / "calibrated_system_eval" / "calibrated_system_eval_comparison.csv"
     if comparison_path.exists():

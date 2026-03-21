@@ -1,65 +1,65 @@
 {
-  "source_experiment_dir": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42",
-  "published_at_utc": "2026-03-21T12:56:41.669157+00:00",
+  "source_experiment_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42",
+  "published_at_utc": "2026-03-21T15:49:02.850713+00:00",
   "artifacts": {
     "calibrated_system_eval_test_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/calibrated_system_eval_test.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/calibrated_system_eval_test.png",
       "published_path": "results/plots/readme/calibrated_system_eval_test.png"
     },
     "cp_sweep_val_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/cp_sweep_val.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/cp_sweep_val.png",
       "published_path": "results/plots/readme/cp_sweep_val.png"
     },
     "example_windows_system_eval_test_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/example_windows_system_eval_test.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/example_windows_system_eval_test.png",
       "published_path": "results/plots/readme/pipeline_example_chronos2_test.png"
     },
     "example_windows_test_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/example_windows_test.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/example_windows_test.png",
       "published_path": "results/plots/readme/forecast_example_chronos2_test.png"
     },
     "forecast_eval_test_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/forecast_eval_test.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/forecast_eval_test.png",
       "published_path": "results/plots/readme/forecast_eval_test.png"
     },
     "forecast_eval_train_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/forecast_eval_train.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/forecast_eval_train.png",
       "published_path": "results/plots/readme/forecast_eval_train.png"
     },
     "forecast_eval_val_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/forecast_eval_val.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/forecast_eval_val.png",
       "published_path": "results/plots/readme/forecast_eval_val.png"
     },
     "split_summary_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/prepare_data_split_summary.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/prepare_data_split_summary.png",
       "published_path": "results/plots/readme/prepare_data_split_summary.png"
     },
     "system_eval_test_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/system_eval_test.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/system_eval_test.png",
       "published_path": "results/plots/readme/system_eval_test.png"
     },
     "tau_calibration_feature_importance_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/tau_calibration_feature_importance.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/tau_calibration_feature_importance.png",
       "published_path": "results/plots/readme/tau_calibration_feature_importance.png"
     },
     "tau_calibration_test_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/tau_calibration_test.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/tau_calibration_test.png",
       "published_path": "results/plots/readme/tau_calibration_test.png"
     },
     "training_coverage_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/training_coverage.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/training_coverage.png",
       "published_path": "results/plots/readme/training_coverage.png"
     },
     "training_interval_width_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/training_interval_width.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/training_interval_width.png",
       "published_path": "results/plots/readme/training_interval_width.png"
     },
     "training_loss_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/training_loss.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/training_loss.png",
       "published_path": "results/plots/readme/training_loss.png"
     },
     "training_rmse_plot": {
-      "source_path": "results/experiments/data_1to672_ctx96_h48/q50_q95_seed42/reports/training_rmse.png",
+      "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42/reports/training_rmse.png",
       "published_path": "results/plots/readme/training_rmse.png"
     }
   }

@@ -16,14 +16,22 @@ from src.dataset import TrafficWindowDataset
 from src.experiment import (
     build_experiment_manifest,
     build_sampled_starts_map,
+    cadence_from_timestamps,
+    validate_regular_timestamps,
     valid_window_start_indices,
 )
 from src.models import DeepARForecast, LSTMForecast
 from src.pipeline import TorchCheckpointForecaster
 
 
-def _write_dataset(path: Path, rows: int = 120, series_count: int = 3) -> None:
-    timestamps = pd.date_range("2024-01-01", periods=rows, freq="15min")
+def _write_dataset(
+    path: Path,
+    rows: int = 120,
+    series_count: int = 3,
+    *,
+    freq: str = "15min",
+) -> None:
+    timestamps = pd.date_range("2024-01-01", periods=rows, freq=freq)
     frame = {"timestamp": timestamps.astype(str)}
     x = np.arange(rows, dtype=float)
     for idx in range(series_count):
@@ -36,6 +44,34 @@ def _write_dataset(path: Path, rows: int = 120, series_count: int = 3) -> None:
     pd.DataFrame(frame).to_csv(path, index=False)
 
 class SplitPipelineTests(unittest.TestCase):
+    def test_cadence_inference_supports_multiple_regular_intervals(self) -> None:
+        ten_min = pd.date_range("2024-01-01", periods=6, freq="10min")
+        fifteen_min = pd.date_range("2024-01-01", periods=6, freq="15min")
+        forty_five_min = pd.date_range("2024-01-01", periods=6, freq="45min")
+
+        self.assertEqual(cadence_from_timestamps(ten_min)[1], "10min")
+        self.assertEqual(cadence_from_timestamps(fifteen_min)[1], "15min")
+        self.assertEqual(cadence_from_timestamps(forty_five_min)[1], "45min")
+
+    def test_regular_timestamp_validation_rejects_malformed_and_irregular_inputs(self) -> None:
+        with self.assertRaisesRegex(ValueError, "malformed timestamps"):
+            validate_regular_timestamps(
+                pd.Series(["2024-01-01 00:00:00", "not-a-timestamp", "2024-01-01 00:20:00"]),
+                data_path="toy.csv",
+            )
+
+        with self.assertRaisesRegex(ValueError, "irregular timestamps"):
+            validate_regular_timestamps(
+                pd.Series(
+                    [
+                        "2024-01-01 00:00:00",
+                        "2024-01-01 00:10:00",
+                        "2024-01-01 00:25:00",
+                    ]
+                ),
+                data_path="toy.csv",
+            )
+
     def test_manifest_split_bounds_and_window_assignment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -84,6 +120,7 @@ class SplitPipelineTests(unittest.TestCase):
                 context_length=8,
                 horizon=4,
             )
+            self.assertEqual(manifest.cadence, "15min")
 
             first = build_sampled_starts_map(
                 manifest=manifest,
@@ -290,6 +327,96 @@ class SplitPipelineTests(unittest.TestCase):
             self.assertEqual(set(summary_df["split"]), {"train", "val", "test"})
             best_df = pd.read_csv(run_dir / "tau_calibration" / "tau_calibration_best_test_rows.csv")
             self.assertTrue(any(str(value).startswith("best_val_") for value in best_df["selected_on"]))
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("ruptures") and importlib.util.find_spec("sklearn"),
+        "ruptures and scikit-learn are required for the cadence integration smoke test",
+    )
+    def test_end_to_end_split_aware_scripts_support_10min(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "toy_10min.csv"
+            run_dir = tmp_path / "run_10min"
+            _write_dataset(data_path, rows=144, series_count=2, freq="10min")
+
+            def run_cmd(*args: str) -> None:
+                subprocess.run([sys.executable, *args], cwd=Path(__file__).resolve().parents[1], check=True)
+
+            run_cmd(
+                "src/prepare_data.py",
+                "--data-path",
+                str(data_path),
+                "--context-length",
+                "8",
+                "--horizon",
+                "4",
+                "--output-dir",
+                str(run_dir),
+            )
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(manifest["cadence"], "10min")
+
+            run_cmd(
+                "src/train.py",
+                "--manifest-path",
+                str(run_dir / "manifest.json"),
+                "--output-dir",
+                str(run_dir),
+                "--models",
+                "lstm",
+                "--max-iterations",
+                "4",
+                "--patience-iterations",
+                "4",
+                "--validate-every",
+                "2",
+                "--log-every",
+                "2",
+                "--batch-size",
+                "8",
+                "--hidden-size",
+                "8",
+                "--num-layers",
+                "1",
+                "--device",
+                "cpu",
+            )
+            run_cmd(
+                "src/forecast_eval.py",
+                "--manifest-path",
+                str(run_dir / "manifest.json"),
+                "--output-dir",
+                str(run_dir),
+                "--models",
+                "lstm",
+                "--splits",
+                "test",
+                "--sampling-mode",
+                "rolling",
+                "--max-windows-per-series",
+                "3",
+                "--device",
+                "cpu",
+            )
+            run_cmd(
+                "src/system_eval.py",
+                "--forecast-dir",
+                str(run_dir / "forecast_eval"),
+                "--models",
+                "lstm",
+                "--splits",
+                "test",
+                "--output-dir",
+                str(run_dir / "system_eval"),
+                "--cp-penalty",
+                "1",
+                "--cp-min-size",
+                "2",
+            )
+            metrics = json.loads(
+                (run_dir / "system_eval" / "test" / "lstm_system_metrics.json").read_text()
+            )
+            self.assertEqual(metrics["num_windows_total"], 6)
 
 
 if __name__ == "__main__":

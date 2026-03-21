@@ -72,6 +72,73 @@ class ExperimentManifest:
         return payload
 
 
+def parse_timestamp_series(
+    values: pd.Series | Sequence[object],
+    *,
+    data_path: str | Path | None = None,
+    timestamp_col: str = DEFAULT_TIMESTAMP_COL,
+) -> pd.Series:
+    timestamps = pd.to_datetime(pd.Series(values), errors="coerce")
+    if timestamps.isna().any():
+        invalid_positions = timestamps.index[timestamps.isna()].tolist()[:5]
+        source = f"{data_path}" if data_path is not None else "dataset"
+        raise ValueError(
+            f"{source} contains malformed timestamps in '{timestamp_col}' at rows "
+            f"{invalid_positions}. Expected a regular timestamp column."
+        )
+    return timestamps
+
+
+def cadence_from_timestamps(timestamps: pd.Series | Sequence[object]) -> tuple[pd.Timedelta, str]:
+    parsed = parse_timestamp_series(timestamps)
+    diffs = parsed.diff().dropna()
+    if diffs.empty:
+        raise ValueError("At least two timestamp rows are required to infer dataset cadence.")
+    delta = diffs.mode().iloc[0]
+    if pd.isna(delta) or delta <= pd.Timedelta(0):
+        raise ValueError("Dataset cadence must be a positive regular interval.")
+    return delta, _format_cadence(delta)
+
+
+def validate_regular_timestamps(
+    values: pd.Series | Sequence[object],
+    *,
+    data_path: str | Path | None = None,
+    timestamp_col: str = DEFAULT_TIMESTAMP_COL,
+) -> tuple[pd.Series, pd.Timedelta, str]:
+    parsed = parse_timestamp_series(values, data_path=data_path, timestamp_col=timestamp_col)
+    if parsed.duplicated().any():
+        duplicate_rows = parsed.index[parsed.duplicated()].tolist()[:5]
+        source = f"{data_path}" if data_path is not None else "dataset"
+        raise ValueError(
+            f"{source} contains duplicate timestamps in '{timestamp_col}' at rows {duplicate_rows}. "
+            "The pipeline expects a strictly increasing regular time grid."
+        )
+    diffs = parsed.diff().dropna()
+    if diffs.empty:
+        raise ValueError("At least two timestamp rows are required to infer dataset cadence.")
+    delta = diffs.mode().iloc[0]
+    if pd.isna(delta) or delta <= pd.Timedelta(0):
+        raise ValueError("Dataset cadence must be a positive regular interval.")
+    mismatch_mask = diffs != delta
+    if bool(mismatch_mask.any()):
+        mismatch_rows = diffs.index[mismatch_mask].tolist()[:5]
+        mismatch_values = [str(value) for value in diffs[mismatch_mask].tolist()[:5]]
+        source = f"{data_path}" if data_path is not None else "dataset"
+        raise ValueError(
+            f"{source} has irregular timestamps in '{timestamp_col}'. Expected a constant step of "
+            f"{_format_cadence(delta)}, but found mismatches at rows {mismatch_rows} "
+            f"with deltas {mismatch_values}."
+        )
+    if not bool(parsed.is_monotonic_increasing):
+        source = f"{data_path}" if data_path is not None else "dataset"
+        raise ValueError(
+            f"{source} must be strictly increasing in '{timestamp_col}'. "
+            "The pipeline does not reorder rows automatically."
+        )
+    return parsed, delta, _format_cadence(delta)
+
+
 def load_wide_dataframe(
     data_path: str | Path,
     timestamp_col: str = DEFAULT_TIMESTAMP_COL,
@@ -91,23 +158,24 @@ def load_wide_dataframe(
         raise ValueError(
             f"{path} contains NaN values in the series columns. Clean the dataset before use."
         )
+    validate_regular_timestamps(df[timestamp_col], data_path=path, timestamp_col=timestamp_col)
 
     return pd.concat([df[[timestamp_col]], value_df], axis=1)
 
 
-def _infer_cadence(df: pd.DataFrame, timestamp_col: str) -> str:
-    timestamps = pd.to_datetime(df[timestamp_col], errors="coerce")
-    diffs = timestamps.diff().dropna()
-    if diffs.empty:
-        return DEFAULT_CADENCE
-    delta = diffs.mode().iloc[0]
-    if pd.isna(delta):
-        return DEFAULT_CADENCE
-    minutes = int(delta.total_seconds() // 60)
-    if minutes > 0:
+def _format_cadence(delta: pd.Timedelta) -> str:
+    total_seconds = int(delta.total_seconds())
+    if total_seconds <= 0:
+        raise ValueError("Dataset cadence must be a positive interval.")
+    if total_seconds % 60 == 0:
+        minutes = total_seconds // 60
         return f"{minutes}min"
-    seconds = int(delta.total_seconds())
-    return f"{seconds}s"
+    return f"{total_seconds}s"
+
+
+def _infer_cadence(df: pd.DataFrame, timestamp_col: str) -> str:
+    _, _, cadence = validate_regular_timestamps(df[timestamp_col], timestamp_col=timestamp_col)
+    return cadence
 
 
 def build_experiment_manifest(

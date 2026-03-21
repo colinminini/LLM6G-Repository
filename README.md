@@ -1,244 +1,177 @@
 # LLM6G
-Forecasting per-sector traffic to support energy-aware radio access networks using deep learning.
+Codebase for the paper:
+**Shift-Aware Forecast-to-Control on TIM Milan: A Public Telecom Benchmark for Zero-Shot and Trainable Models**
 
-## Environment
-- Create an isolated environment (e.g., `python3 -m venv .venv && source .venv/bin/activate`).
-- Install dependencies from `requirements.txt` (`pip install -r requirements.txt`). Chronos inference runs on device; GPU is optional.
-- AutoGluon fine-tuning is legacy-only; the published main pipeline does not require it.
+## What this repo is
+- This repo is the reproducible codebase for our FINE 2026 paper submission.
+- The paper studies a **shift-aware forecast-to-control pipeline** on public telecom traffic.
+- The benchmark is built from the public **TIM Milan** dataset.
+- The main comparison is:
+  `LSTM`, `DeepAR`, and `Chronos-2` in zero-shot mode.
 
-## Canonical workflow
-- The canonical dataset for the published forecasting stack is `data/data_1to672.csv`.
-- Default quantiles are `(0.5, 0.95)` and the default chronological split is `70% train / 10% val / 20% test`.
-- The main reproducible flow is one orchestration command:
-  1. `python src/run_experiment.py --data-path data/data_1to672.csv --context-length 48 --horizon 48 --models lstm,deepar,chronos2`
-  2. open `notebooks/experiment_report.ipynb` and set `EXPERIMENT_DIR` to the generated run directory.
-- The runner executes `prepare_data -> train -> forecast_eval -> system_eval -> cp_sweep -> tau_calibration`, prints stage progress in the terminal, and writes plots plus machine-readable summaries under `results/experiments/.../reports/`.
-- After each successful stage, the runner also republishes lightweight README-facing PNGs from the current report bundle under `results/plots/readme/`.
-- The individual stage scripts under `src/` remain available for debugging or partial reruns, but they are now the implementation backbone rather than the recommended entrypoint.
-- `LSTM` and `DeepAR` are the trainable baselines in the main path. `Chronos-2` is evaluated zero-shot only.
-- `TFT` and `Chronos-2` fine-tuning are retained only as legacy/archival code paths.
-- `notebooks/experiment_report.ipynb` is the only maintained notebook in the main path. Historical notebooks live under `notebooks/legacy/`.
+## Paper claim
+- Traffic control should account for the **next change of distribution**, not only point accuracy.
+- The pipeline in this repo is:
+  forecast probabilistic traffic ->
+  predict the first break point ->
+  compute a pre-break safe ceiling ->
+  hold the control policy over that interval ->
+  rerun after the predicted break.
+- The practical question is:
+  can a zero-shot foundation model enter that loop and remain operationally credible against trained baselines?
 
-## Legacy note
-- The meeting-log sections below remain for historical context and older experiments.
-- When they mention `data_1to7`, `train_models_display_coverage.ipynb`, or Chronos-2 fine-tuning, treat those as archival rather than the current published workflow.
-- Any notebook path outside `notebooks/experiment_report.ipynb` should be read as legacy and is kept only for reference.
+## Main artifact
+- Public benchmark:
+  TIM Milan `InternetTraffic` at native `10min` cadence.
+- Full clean benchmark:
+  `10,000` raw grid cells,
+  `8,883` fully observed cells kept,
+  `1,117` incomplete cells dropped.
+- Trainable subset:
+  `200` complete cells selected with a neutral deterministic rule.
+- Current main reproduced run:
+  `context = 48`,
+  `horizon = 48`,
+  `70 / 10 / 20` chronological split,
+  `seed = 42`.
 
-## Goal and approach
-- We forecast traffic (Mbps) for each antenna sector to inform sleep-mode and energy-management policies.
-- The pipeline relies on zero-shot Chronos family models (Chronos-T5, Chronos-Bolt, Chronos-2) without fine-tuning; we only prepare data and evaluate.
+## Repository map
+- `src/`
+  pipeline code, forecasting models, evaluation, experiment runner
+- `data/`
+  dataset builders for TIM Milan and the trainable subset
+- `results/experiments/`
+  full machine-readable outputs of experiment runs
+- `results/plots/readme/`
+  stable figures used in the README and paper
+- `notebooks/experiment_report.ipynb`
+  maintained report notebook for a finished run
+- `paper/`
+  LaTeX source of the conference paper
+- `experiment_notes.md`
+  archival notes, older experiments, and meeting-log material
 
-## Overall view on the Chronos models
-- The Chronos models are foundational models for time series. ([1]). They are pre-trained on an extremely large time-series dataset (here put the approximate size). Its architecture is the same as an LLM: transformer-based for long-term attention, parallelized training, and scalable parameter count, using a decoder-only structure (Chronos-T5 is encoder–decoder; Chronos-Bolt/Chronos-2 are decoder-only). Tokenization is the main difference compared to text generation tasks. Here the input space is a continuous 1-D time series.
-The continuous input space is discretized into tokens, called bins.
-- For each input, we take a context of size `C` and predict a horizon of size `H`. Real-valued series are mean-scaled and quantized into a fixed vocabulary (4096 bins with PAD/EOS). The context vector is used to perform starndard-deviation-normalization (mean = 0) of the input. Scaling uses `m = 0` and `s = (1/C) * sum_{t=1..C} |x_t|`, so `x_t` becomes `x_t / s`. 
-- Then the input is discretized. Quantization maps each scaled value to a bin ID: `q(x) = j` when `b_{j-1} <= x < b_j`, and dequantization uses the bin center `d(j) = c_j`. Uniform bins are placed between `c_1` and `c_B` (Chronos uses `c_1 = -15`, `c_B = +15`). 
-- At this point we have the same setting as an LLM input, namely a sequence of tokens. We pad the input sequence if it is shorter than the context size, and we truncate by taking only the last values if it is longer.
-- We then compute the distributions of the output sequence autoregressively. This means we use the C context tokens to get the forecast distribution of Xc+1; then we append the sampled token for `z_{C+1}` to the input sequence and use it to predict `z_{C+1}`, and so on, until the full prediction horizon is generated. `L = - sum_{h=1..H+1} log p_theta(z_{C+h} | z_{1:C+h-1})`.
-- Forecasting is regression-via-classification. The predictions are distributions: during training, Chronos statistically learns the “general” distribution of time-series data (of every kind! e.g. finance, environmental, energy...) by minimizing cross-entropy between Chronos’s predicted token distribution and the “real-world” distribution represented in the large pretraining dataset.
-- Now, regarding selection of the next token: we do not take the token with highest probability (argmax), unless we want deterministic decoding. Instead, Chronos uses the predicted probability distribution over bins to compute quantiles. From these quantiles, the model produces the median forecast and prediction intervals. Concretely, quantiles are obtained by inverting the discrete CDF derived from the token probabilities, giving a median and confidence intervals for each autoregressive step.
-- During inference we autoregressively sample from `p_theta(z_{C+h} | z_{1:C+h-1})`, dequantize, and unscale. Point forecasts in this repo use either the 0.5-quantile returned by Bolt/Chronos-2 or the mean of `num_samples` draws for sample-based models.
+## Setup
+- Create an environment:
+  `python3 -m venv .venv && source .venv/bin/activate`
+- Install dependencies:
+  `pip install -r requirements.txt`
+- Chronos-2 inference can run on CPU.
+- The paper PDF in `paper/` requires a local TeX installation.
 
 ## Data
-- For our project, we want to predict the consumption of Mbps in antenna sectors to enable intelligent energy usage. The traffic on different antennas varies during the day, week, and months. There is not always the same number of people using them depending on the time. To make the system's energy consumption intelligent, we try to predict the Mbps consumption over time for the antennas.
-- We have a dataset (`data/histo_trafic.csv`) of scalar values (Mbps) for 86 antennas, taken every week between June 2018 and January 2024, with between 257–286 scalar values for each antenna.
-- `scripts/dataprocessing.py` normalizes timestamps (French dates → ISO), groups by sector, and writes one context/target pair per sector to JSONL for downstream evaluation. After preprocessing (`data/processed_trafic_original.jsonl`) contexts range from 257–286 points (mean ≈ 284).
-- The first step is to expand this dataset using data augmentation techniques to create an instantaneous dataset. The idea, in a nutshell, is to compute statistical features from the dataset and use them to estimate the number of users during each period, which is then used to augment the data:
-- Synthetic instantaneous dataset (`data/histo_trafic_instant.csv`): per-sector high-frequency series generated to emulate bursty arrivals following the digital-twin traffic model of Masoudi et al. ([2]). For each 5-minute slot (original dataset) we compute empirical mean/variance across days, assume an interrupted Poisson process (IPP) with ON/OFF rates `tau` and `zeta`, and solve for the Poisson rate `lambda` and mean per-arrival demand `E[psi]` such that:
-  ```
-  E[U] = lambda * tau/(tau + zeta) * T
-  Var(U) ≈ lambda * tau/(tau + zeta) * T * (1 + 2*lambda*zeta/(tau + zeta)^2)
-  E[Psi] = E[U] * E[psi]
-  Var(Psi) = E[U] * Var(psi) + Var(U) * (E[psi])^2
-  ```
-  where `U` is the number of arrivals in window `T` and `Psi` the aggregated rate. 
-- This yields per-second traffic sequences (≈49k–58k points per sector). A 5-sector subset lives in `data/histo_trafic_instant_short.csv` for quicker experiments. We then obtain a much larger dataset of size: 86 (antennas) times ~55k (augmented scalar values).
-- Now, we compute the prediction of the last value in each antenna’s dataset using all previous values as context. The context (~55k tokens) is much larger than what the models can process: the maximum context sizes of the Chronos models range from 512 tokens (Chronos) to 8192 tokens (Chronos 2). Therefore, the models crop the input and only keep the most recent values (excluding the very last one) as context for predicting the final value.
-- We perform the forecasting separately for each of the 86 antennas. The predictions are inherently stochastic, we repeat the experiment num_samples = 32 times and take the mean the 32 draws as the final prediction for sample based models.
-- For each model in the Chronos family, we then compute the RMSE between this averaged prediction and the ground truth. Finally, we compute the average RMSE over all entries of our dataset, meaning over all antennas.
+- Dataset source:
+  Gianni Barlacchi et al., *A multi-source dataset of urban life in the city of Milan and the Province of Trentino*, *Scientific Data*, 2015.
+- Raw telecom files are accessed through the O-RAN SC mirror/reference page.
+- In this repo, we use only the `InternetTraffic` field.
+- The processed series are **Milan grid cells**, not radio sectors.
+- Values are normalized public telecom activity proxies, not literal Mbps counters.
 
-## Evaluation pipeline
-- `scripts/single_eval.py` loads a Chronos pipeline, feeds each sector’s full history as context, and forecasts the final step (prediction length 1). The Chronos library internally truncates to each model’s maximum context window.
-- For sample-based models we draw `num_samples=32` forecasts and average; for quantile-returning models we take the median. We report RMSE across sectors.
+### Build the full TIM Milan benchmark
+- Command:
+  `python data/build_tim_milan_dataset.py`
+- Outputs:
+  `data/data_tim_milan_10min.csv`
+  `data/data_tim_milan_10min_metadata.csv`
+  `data/data_tim_milan_10min_dropped_cells.csv`
+- Builder policy:
+  keep the native `10min` cadence,
+  align the full city-wide grid,
+  keep all fully observed cells,
+  drop only incomplete cells.
 
-## Results
-- Historical weekly data (`results/summary_hist_trafic_original.csv`, 86 sectors): best RMSE from `amazon/chronos-bolt-mini` (6.72).
-- Synthetic instantaneous subset (`results/summary_hist_trafic_instant.csv`, 86 sectors): best RMSE from `amazon/chronos-bolt-tiny` (2.11).
-- Interestingly the predicion accuracy doesn't always improve with the parameter count being higher. A reason for that might be the amount of predictions being low, the RMSE is only averaged over 86 values.
-- The RMSE of the augmented dataset being three times lower than the one of the original dataset mainly is because of the amount of 0 scalar target values being higher, and those values being easier for the models to predict (lower RMSE for these targets). 
-- Check `/results/evals/` for predictions and targets.
+### Build the trainable subset
+- Command:
+  `python data/build_tim_milan_trainable_subset.py`
+- Outputs:
+  `data/data_tim_milan_10min_trainable_200.csv`
+  `data/data_tim_milan_10min_trainable_200_metadata.csv`
+- Selection rule:
+  sort complete cells by ascending `square_id`,
+  keep the first `200`.
+- This rule is neutral and reproducible.
 
-## Inference Comparison with LSTM Baseline (08/01 Meeting)
+## Run the published experiment
+- Main command:
+  `python src/run_experiment.py --data-path data/data_tim_milan_10min_trainable_200.csv --context-length 48 --horizon 48 --models lstm,deepar,chronos2`
+- This runs:
+  `prepare_data -> train -> forecast_eval -> system_eval -> cp_sweep -> tau_calibration`
+- Main experiment directory:
+  `results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42`
+- The pipeline is cadence-flexible.
+- The same runner also works on other regular timestamp grids.
 
-- We now want to compare inference capabilities of 0-shot prediction models with an LSTM trained on the dataset itself.
-- Cleaning: First thing is to create a dataset for training/validation/testing. The data yields from the histogram of traffic_mbps of the 86 antenna sectors. One challenge is that some of the values of traffic are missing for some antennas. We should reformat the histogram to a table-like format for which one feature is the timestamp and the rest 86 features are the 86 antenna sectors. 
-- To create this cleaned data we select the largest, continuous in time, dataset included in the histogram, for which none of the sectors has any missing values. The script 'utils/build_dataset.py' is used for this. The total number of points in the cleaned dataset with ZERO NaN values is now 49.6k compared to an average (over the sectors) of 55k points beforehand. For the original data it is now 129 points compared to the around 300 points beforehand. 
-- Dataset: We split the data chronologically to avoid time-series data-leakage. We split the data into 3 datasets: Training (80%), Validation (10%), Testing (10%)
-- We define models architecture in 'scripts/models.py'
-- We define the Pytorch dataloaders in 'scripts/loader.py' and the Dataset Class in 'scripts/dataset.py'
-- We define the Trainer Class in 'scripts/trainer.py'
-- We define 'scripts/train_run.py' for the training run of the models
-- For training run: train_run.py --model all
-- At the same time, to check the logs run: tensorboard --logdir results/logs
-- Instant Dataset is too computationally heavy for every model. We couldn't compute the metrics.
-- Original dataset results are in 'notebook.ipynb': lstm is the best!  
-- Patience parameter with validation dataset (set at 3)
+## Evaluation logic
+- Forecast outputs:
+  `q50` and `q95`
+- Control logic:
+  detect `tau_pred` on `q50`,
+  compute `safe_ceiling = max(q95[:tau_pred])`,
+  evaluate the resulting pre-break control interval
+- Forecast metrics:
+  `RMSE_q50`, `Pinball_q50`, `Pinball_q95`, `Coverage_q95`, interval width
+- System metrics:
+  `MAE_CP`, tolerance hit rate, `coverage_rate`, `sharpness`
+- The control interpretation is:
+  `coverage_rate` measures protection under the ceiling
+  `sharpness` measures how conservative the ceiling is
 
-## Quantile Loss Optimization LSTM/Chronos2 Comparison (15/01 Meeting):
-- We now want to forecast quantiles instead of doing conditional mean regression - predicting the mean of Y/X (MSE Loss).
-- Cross-Entropy loss optimization on bins (discretized space) allows for a more expressive pdf representation compared the conditional mean estimator we get from the L2 Loss optimization on the continuous space - which only work for a dataset of unimodal conditional pdf (Y/X).
-- Quantile loss function is the Pinball Loss Function. It's averaged over the quantiles and the forecast horizon. The estimator of this objective function are the corresponding quantiles.
-- RMSE is still one of the comparison metrics - with the median quantile as the forecasted point for both models. We could also use MAE as a comparison metric - we compute the median with the 0.5 quantile, not the mean. But as long as both model us the same forecasting method - namely the median point of the output pdf - RMSE is still a fair comparison metric.
-- Results: Chronos2 is the undisputed winner in this training setting - and so amoung all relevant metrics (see 'notebook.ipynb')
-- Note : Cross-Entropy Loss doesn't take into account the relative distance between bins. Bins discretization is a tradeoff between precision of forecasting (huge amount of bins) and feasable objective loss function that allows training (small amount of bin).
-- 2nd Note: For several steps forecasting, auto-regressive models can be subjected to compounding errors. For time-series forecasting it might be better to avoid this and outpout the forecasted vector in a single forward pass.
+## Main reproduced results
+- `LSTM` is strongest overall on the current Milan `200`-cell benchmark.
+- `Chronos-2` is the main zero-shot baseline.
+- `Chronos-2` stays close to `DeepAR` on system metrics while avoiding Milan-specific retraining.
+- On the current test run:
+  `LSTM`
+  `RMSE_q50 = 6.04`, `Coverage_q95 = 0.974`, `MAE_CP = 9.22`, `coverage_rate = 0.979`
+  `DeepAR`
+  `RMSE_q50 = 7.07`, `Coverage_q95 = 0.828`, `MAE_CP = 9.42`, `coverage_rate = 0.953`
+  `Chronos-2`
+  `RMSE_q50 = 7.19`, `Coverage_q95 = 0.915`, `MAE_CP = 9.67`, `coverage_rate = 0.956`
+- Operational takeaway:
+  zero-shot Chronos-2 is not the best model on this run,
+  but it is a credible no-retraining operating point inside the full control loop.
 
+![Forecast evaluation on Milan test windows](results/plots/readme/forecast_eval_test.png)
 
-## DeepAR and TFT Implementation and RMSE Benchmark (22/01 Meeting):
-![Benchmark plot](results/plots/Benchmark.png)
-- On the original dataset chronos2 is the best model because of limited amount of training samples
-- On the 1 to 7 instantaneous dataset; DeeepAR performs the best after training
-- DeepAR is a probabilistic model, designed to be trained on several time-series. The time-series are assigned a score of being selected. An LSTM encodes the context history. A linear layer takes the encoded context and outputs the mean and std of a gaussian (for real-value prediction). The input history context is used for scaling sample-wise. The prediction linear layer output then gets re-sclaed. In our case we only train on one time-series. During inference it autoregressively predicts the next values from the input context. During training, the real value from the target forecast is used for the following predictions.
-- DeepAR is trained using GaussianNLLLoss thus performing better for RMSE Metric on 1 to 7 dataset
-- LSTM (quantile) and TFT are trained using quantile loss thus both perform better for quantile metrics on 1 to 7 dataset
-- DeepAR Quantiles are computed with its output - namely its Gaussian parameters for each forecasted timestamp
+![System evaluation on Milan test windows](results/plots/readme/system_eval_test.png)
 
+![Chronos-2 pipeline example](results/plots/readme/pipeline_example_chronos2_test.png)
 
-## Coverage Benchmarking with Chronos-2 Finetuning (05/02 Meeting):
+## Secondary analyses
+- `cp_sweep`
+  validation sweep of the PELT change-point detector
+- `tau_calibration`
+  post-hoc correction of predicted break points
+- In the current paper story:
+  CP tuning stays in the main pipeline,
+  tau calibration is a mixed exploratory result and not part of the deployed main method.
 
-![Coverage Benchmark (Train Notebook)](results/plots/benchmark_train_models_display_coverage.png)
+## Paper
+- LaTeX sources:
+  `paper/main.tex`
+  `paper/sections/`
+  `paper/figures/`
+  `paper/references.bib`
+- Compile from `paper/` with:
+  `latexmk -pdf main.tex`
+- Default paper mode is anonymized submission.
+- Camera-ready authors can be restored through the toggle in `paper/main.tex`.
 
-
-## Full System Design and Evaluation (03/03 Meeting)
-
-### What is new in the repository:
-- All of our forecasting stack is probabilistic end-to-end: each model returns `q50` (median path) and `q95` (upper path).
-- LSTM is trained with Pinball loss for quantile regression; default training quantiles are now `(0.5, 0.95)` and the output is multi-step. One forward pass covers the full forecasting window quantiles preds.
-- DeepAR remains Gaussian (`mu`, `sigma`) and is converted to quantiles during inference (`q50 = mu`, `q95 = mu + 1.645*sigma`).
-- Chronos-2 integration now reads quantiles directly from model output tensors (no `num_samples` argument in `predict`); `q50`/`q95` indices are resolved from wrapper metadata, with fallback to Chronos-2 21-quantile layout (`10`, `-2`).
-- Hybrid pipeline logic: detect first change point `tau_pred` on `q50` with Ruptures PELT, then compute the stationary “Safe Ceiling” as `max(q95[:tau_pred])` (or full horizon if no change point).
-- Evaluation pipeline supports rolling and random window sampling on selected datasets (including full `data/data_1to7.csv` and `data/data_original.csv`) and saves metrics to `results/evaluation/`.
-- Reported metrics are change-point MAE, tolerance hit rate, coverage rate under the predicted safe ceiling, and sharpness (over-provisioning).
-- Visualization notebooks now plot history, future truth, `q50`, `q95`, `tau_pred`, `tau_true`, and save figures under `results/evaluation/` or `results/plots/`.
-
-### Current System (Quick View):
-- What we forecast:
-  per-sector traffic time series (Mbps), using probabilistic trajectories `q50` (median) and `q95` (upper quantile) over a multi-step horizon.
-- Pipeline:
-  forecast (`q50`, `q95`) -> detect first change point `tau_pred` on `q50` -> compute safe ceiling as `max(q95[0:tau_pred])` -> evaluate against future ground truth and `tau_true`.
-- Forecasting mode by model:
-  `LSTM` outputs direct multi-step quantile vectors in one forward pass; `Chronos2` returns direct multi-step quantiles from its output tensor.
-- DeepAR training vs inference:
-  training uses teacher forcing on the full horizon (`context + true targets`, shifted input) and optimizes Gaussian NLL on all future steps; inference is autoregressive rollout, where each step reuses the previous prediction as next input.
-- DeepAR quantile conversion in this repo:
-  from Gaussian outputs, we use `q50 = mu` and `q95 = mu + 1.645*sigma` (deterministic path in eval with `sample=False`).
-- Key hyperparameters used in system evaluation:
-  `context_length`, `forecast_length/horizon`, quantiles (`0.5`, `0.95`), CP detector settings (`model='normal'`, `penalty`, `min_size`, `jump`), and sampling settings (rolling/random windows).
-- Evaluation metrics:
-  `MAE_CP` (change-point timing error), `Tolerance Hit Rate` (`|tau_pred - tau_true| <= 3`), `Coverage Rate` (`actual <= safe_ceiling`), `Sharpness` (`safe_ceiling - max(actual)`; lower is tighter), better to be positive.
-- Coverage definition used in `system_eval`:
-  for each sampled window, we detect `tau_true` on the future ground truth and build the true pre-change interval `[t, tau_true)` (or full horizon if no change). We then count the fraction of points in that interval that are below the predicted `safe_ceiling = max(q95[0:tau_pred])`. The reported `coverage_rate` is the global ratio `total_hits / total_points` aggregated over all sampled windows (length-weighted, not a simple mean of per-window coverages).
-
-### Horizon Consistency (Train vs Eval):
-- If eval horizon > training horizon:
-  In `src/pipeline.py`, baseline checkpoints are extended autoregressively by chaining forecast blocks and feeding predicted `q50` back as new context. This increases compounding error, can flatten forecasts, and usually degrades CP detection and coverage.
-- If eval horizon < training horizon:
-  The model outputs are truncated to the first eval steps. This is valid, but those early-step metrics are not directly comparable to a model trained specifically for that shorter horizon.
-- Practical recommendation:
-  Keep `forecast_length` (training) == `horizon` (system eval) for LSTM/DeepAR/TFT benchmark runs. If you must mismatch, report it explicitly in results.
-
-### Plot Configuration Note:
-- For the benchmark plots shown here, we used:
-  `context_length = 48` and `forecast_length = horizon = 48`.
-- Reason:
-  dataset split limitations (`val` and `test` lengths are too short for `128` in our setup), so `48` keeps enough valid evaluation windows.
-- Sampling used for eval metrics:
-  we evaluate on `50` random samples/windows per series (with paired windows across systems) and aggregate metrics over all sampled windows; with 86 series this is `50 x 86 = 4300` sampled windows per system.
-- Important evaluation scope note:
-  for these plots, system eval was run on the full `data/data_1to7.csv` timeline, including the first 80% that was used as training period for LSTM/DeepAR.
-- Interpretation impact:
-  this can make LSTM/DeepAR look stronger than on strictly unseen-only evaluation; we accepted this setup due to size limitations of standalone `val`/`test` portions for the chosen horizon/context settings.
-- Consistency choice:
-  we kept the same setting for system eval and Chronos2 comparison to keep results comparable across `LSTM`, `DeepAR`, and `Chronos2`.
-- Expected tradeoff:
-  we suspect Chronos2 could improve with a larger context window, but we do not increase it in these benchmark plots because the DL baselines (`LSTM`, `DeepAR`) are trained/evaluated with the shared constrained setup.
-
-![Forecast Example (Chronos-2)](results/plots/readme/forecast_example_chronos2_test.png)
-
-![Pipeline Example (Chronos-2)](results/plots/readme/pipeline_example_chronos2_test.png)
-
-![Benchmark: LSTM vs DeepAR vs Chronos2](results/plots/benchmark_lstm_deepar_chronos2_data_1to7.png)
-
-### Chronos-2 Context-Length Variation (48 -> 512):
-- We benchmarked **Chronos-2** on `data/data_1to7.csv` with fixed `horizon=48` and varying context lengths:
-  `48, 64, 96, 128, 192, 256, 384, 512`.
-- To make contexts directly comparable, all runs use the **same sampled windows** (paired random windows, fixed seed, fixed evaluation start index).
-- The coverage subplot includes a red `0.95` threshold line to visualize which context is closest to target coverage.
-
-![Chronos-2 Context Sweep Benchmark](results/plots/benchmark_chronos2_context_sweep_48_to_512.png)
-
-
-## Top Module (19/03)
-- Corrected the LSTM quantile-loading bug in `src/pipeline.py`: the checkpoint adapter was reshaping the saved head output with an ambiguous `(forecast_length, num_quantiles)` geometry, which corrupted the LSTM `q50` path in `system_eval`. The loader now respects the explicit eval horizon/quantiles, so the multi-step quantile trajectories are consistent again.
-- Change-point detector hyperparameter sweep on top of the saved `system_eval` forecasts:
-  we added `src/cp_sweep.py` and the archived `notebooks/legacy/cp_hyperparameter_sweep.ipynb` to sweep `ruptures` PELT settings over the already-saved probabilistic windows (`4300` paired windows/model on `data/data_1to7.csv`) without rerunning the forecasters.
-- Sweep grid:
-  `model='normal'`, `jump=1`, `penalty in {10, 15, 20}`, `min_size in {8, 10, 12}`.
-- Result:
-  the shared setting `cp_penalty=10`, `cp_min_size=8`, `cp_jump=1` is the best global choice across `LSTM`, `DeepAR`, and `Chronos2`: it improves both `MAE_CP` and tolerance hit rate for all three systems while keeping coverage essentially unchanged.
-- Main system-eval defaults were updated accordingly:
-  `cp_penalty=10`, `cp_min_size=8`, `cp_jump=1` in `src/evaluate.py`, and the archived `notebooks/legacy/system_eval.ipynb` used the same tuned detector before the runner/report refactor.
-
-![Change-Point Hyperparameter Sweep Heatmaps](results/plots/readme/cp_sweep_val.png)
-
-- Post-hoc `tau` calibration experiment on top of the tuned saved windows:
-  we added `src/tau_calibration.py` and the archived `notebooks/legacy/tau_calibration_experiment.ipynb` to learn a correction from saved per-window forecasts and history features (`q50`, `q95`, width, local CP-shape features, history statistics, calendar features, per-series stats) using chronological train/val/test splits.
-- How the calibration modules were trained:
-  they were not trained on the original raw forecasting targets directly; instead we reused the saved `system_eval` windows from `results/evaluation/*_window_metrics.csv` built on `data/data_1to7.csv`, reconstructed each window’s history/future segment, recomputed `tau_pred` and `tau_true` with the tuned CP detector, and then split windows chronologically by `start_index` into `60% train / 20% val / 20% test` before fitting the post-hoc regressors/offset models.
-- Calibration result and interpretation:
-  the comparison plot below shows the main tradeoff clearly: several calibrators can reduce CP timing error, but the best technique depends on which system metric we prioritize.
-  `DeepAR` benefits the most cleanly from post-hoc calibration, and a simple global offset is already strong; `Chronos2` also benefits, but feature-based models mainly help if we optimize for lower `MAE_CP`, while a simpler offset is more stable for tolerance-hit rate.
-  `LSTM` is the most delicate case: feature-based correction can improve CP timing error, but it tends to over-correct and lose tolerance-hit accuracy, so raw `tau` or only a mild offset remains the safer operating point.
-
-![Tau Calibration Test Comparison](results/plots/readme/tau_calibration_test.png)
-
-- All-techniques view:
-  the heatmaps below compare every tested bias-correction technique on the test split. They show that tree-based regressors are often the most aggressive in reducing `MAE_CP`, while offset-based methods are usually more conservative and preserve the system behaviour better.
-  This is why the final recommendation is model-dependent instead of adopting one universal calibrator for all systems.
-
-![Tau Calibration All Techniques](results/plots/tau_calibration_all_techniques_heatmaps.png)
-
-- Feature interpretation:
-  when a feature-based calibrator is selected, the importance plot shows that the dominant signals are still the original predicted break point (`tau_pred_raw`, `tau_pred_norm`) plus local path-shape features around the predicted change (`q50`/width jumps) and recent history statistics.
-  In other words, the calibrator is mostly refining the detector’s output rather than discovering an unrelated change-point signal from scratch.
-
-![Tau Calibration Feature Importances](results/plots/readme/tau_calibration_feature_importance.png)
-- Saved calibration artifacts:
-  metrics and predictions are under `results/evaluation/tau_calibration/`;
-  comparison plot: `results/plots/readme/tau_calibration_test.png`;
-  all-techniques plot: `results/plots/tau_calibration_all_techniques_heatmaps.png`;
-  feature-importance plot: `results/plots/readme/tau_calibration_feature_importance.png`.
-- Features used by the post-hoc tau calibration module:
-  `tau_pred_raw`, `tau_pred_norm`, `tau_pred_is_horizon`, `tau_pred_is_zero`, `safe_ceiling_raw`.
-  These encode the raw detector output itself, whether it collapsed to an edge case, and the ceiling implied by the uncorrected break point.
-  `tau_pred_norm = tau_pred_raw / horizon`, so it tells the calibrator whether the predicted break happens early or late relative to the forecast window.
-- Forecast-path level features on `q0.5` and `q0.95`:
-  `y50_*` and `y95_*` summarize the predicted median and upper quantile over the full horizon with first/last value, mean, std, min/max, range, quantiles, slope, total delta, pointwise variation, early-vs-late gap, and where the extrema occur.
-- Uncertainty-width features:
-  `width_*` is built from `q0.95 - q0.5` and captures how much uncertainty the forecaster has, whether that uncertainty grows or shrinks over the horizon, and how volatile that width profile is.
-- Local shape features around the predicted break:
-  `y50_before_tau_mean`, `y50_after_tau_mean`, `y50_post_pre_gap`, `y50_at_tau`, `y50_prev_tau`, `y50_next_tau`, `y50_jump_tau`, plus the matching `width_*_tau` features describe what the forecast and the uncertainty look like exactly around the detected change-point.
-- History-context features:
-  `hist_*` summarizes the input context window seen by the forecaster with level, spread, quantiles, trend, recent trend on the last 10/20 steps, diff statistics, zero fraction, lag-1 autocorrelation, and how unusual the latest observed value is versus the recent past.
-- Forecast-vs-history transition features:
-  `hist_last_minus_y50_first` and `hist_last_minus_y95_first` measure the jump between the end of the observed context and the first step of the predicted horizon.
-- Calendar features:
-  `calendar_hour`, `calendar_minute`, `calendar_second`, `calendar_dayofweek`, `calendar_day_sin/cos`, and `calendar_week_sin/cos` let the calibrator exploit time-of-day and day-of-week structure in when change-points tend to happen.
-- Series identity and global series statistics:
-  `series` is one-hot encoded so the module can learn per-cell behavior, and `series_global_mean`, `series_global_std`, `series_global_q90`, `series_global_zero_frac` provide a long-run profile of each traffic series.
-
-https://www.ieee-fine.org/2026/
+## Notes
+- `README.md` is the codebase companion of the paper.
+- `experiment_notes.md` keeps older context and historical notes.
+- Legacy private-data and augmented-data experiments are kept out of the main paper story.
 
 ## References
-- [1] A. F. Ansari et al., “Chronos-2: From Univariate to Universal Forecasting,” arXiv:2510.15821, 2025. (`references/Chronos-2.pdf`)
-- [2] M. Masoudi et al., “Digital Twin Assisted Risk-Aware Sleep Mode Management Using Deep Q-Networks,” arXiv:2208.14380, 2022. (`references/KTH.pdf`)
+- IEEE FINE 2026 CFP:
+  <https://www.ieee-fine.org/2026/>
+- TIM Milan dataset paper:
+  <https://doi.org/10.1038/sdata.2015.55>
+- O-RAN SC dataset mirror/reference page:
+  <https://lf-o-ran-sc.atlassian.net/wiki/spaces/SIM/pages/13435002/Simulated+datasets>
+- Chronos:
+  <https://arxiv.org/abs/2403.07815>
+- Chronos-2:
+  <https://arxiv.org/abs/2510.15821>
+- DeepAR:
+  <https://arxiv.org/abs/1704.04110>

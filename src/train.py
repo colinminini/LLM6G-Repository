@@ -44,7 +44,7 @@ def _parse_models(raw: str) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train LSTM and DeepAR baselines on the canonical data_1to672 setup."
+        description="Train LSTM and DeepAR baselines on a regular split-aware experiment manifest."
     )
     parser.add_argument("--manifest-path", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)

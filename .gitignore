@@ -20,3 +20,5 @@ results/plots/*
 !results/plots/readme/**
 **/events.out.tfevents.*
 paper/
+tests/
+references/

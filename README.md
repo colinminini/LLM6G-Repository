@@ -46,8 +46,6 @@ Codebase for the paper:
   stable figures used in the README and paper
 - `notebooks/experiment_report.ipynb`
   maintained report notebook for a finished run
-- `paper/`
-  LaTeX source of the conference paper
 - `experiment_notes.md`
   archival notes, older experiments, and meeting-log material
 
@@ -120,15 +118,7 @@ Codebase for the paper:
 - `LSTM` is strongest overall on the current Milan `200`-cell benchmark.
 - `Chronos-2` is the main zero-shot baseline.
 - `Chronos-2` stays close to `DeepAR` on system metrics while avoiding Milan-specific retraining.
-- On the current test run:
-  `LSTM`
-  `RMSE_q50 = 6.04`, `Coverage_q95 = 0.974`, `MAE_CP = 9.22`, `coverage_rate = 0.979`
-  `DeepAR`
-  `RMSE_q50 = 7.07`, `Coverage_q95 = 0.828`, `MAE_CP = 9.42`, `coverage_rate = 0.953`
-  `Chronos-2`
-  `RMSE_q50 = 7.19`, `Coverage_q95 = 0.915`, `MAE_CP = 9.67`, `coverage_rate = 0.956`
-- Operational takeaway:
-  zero-shot Chronos-2 is not the best model on this run,
+- Zero-shot Chronos-2 is not the best model on this run,
   but it is a credible no-retraining operating point inside the full control loop.
 
 ![Forecast evaluation on Milan test windows](results/plots/readme/forecast_eval_test.png)

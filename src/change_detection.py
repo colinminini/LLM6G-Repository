@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from src.config import DEFAULT_CP_JUMP, DEFAULT_CP_MIN_SIZE, DEFAULT_CP_MODEL, DEFAULT_CP_PENALTY
+
 
 class ChangePointDetector(ABC):
     """Abstract change-point detector interface."""
@@ -25,10 +27,10 @@ class RupturesPeltDetector(ChangePointDetector):
 
     def __init__(
         self,
-        model: str = "normal",
-        penalty: float = 15.0,
-        min_size: int = 10,
-        jump: int = 1,
+        model: str = DEFAULT_CP_MODEL,
+        penalty: float = DEFAULT_CP_PENALTY,
+        min_size: int = DEFAULT_CP_MIN_SIZE,
+        jump: int = DEFAULT_CP_JUMP,
     ) -> None:
         self.model = model
         self.penalty = float(penalty)
@@ -82,9 +84,9 @@ def detect_first_change_point(
 ) -> int | None:
     """Convenience wrapper for first change-point detection using PELT."""
     detector = RupturesPeltDetector(
-        model=str(kwargs.pop("model", "normal")),
-        penalty=float(kwargs.pop("penalty", 15.0)),
-        min_size=int(kwargs.pop("min_size", 10)),
-        jump=int(kwargs.pop("jump", 1)),
+        model=str(kwargs.pop("model", DEFAULT_CP_MODEL)),
+        penalty=float(kwargs.pop("penalty", DEFAULT_CP_PENALTY)),
+        min_size=int(kwargs.pop("min_size", DEFAULT_CP_MIN_SIZE)),
+        jump=int(kwargs.pop("jump", DEFAULT_CP_JUMP)),
     )
     return detector.detect_first_change_point(timeseries_array, **kwargs)

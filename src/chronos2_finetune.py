@@ -1,9 +1,12 @@
 """
-AutoGluon Chronos-2 fine-tuning utilities.
+Legacy AutoGluon Chronos-2 fine-tuning utilities.
 
 This module centralizes the data prep, training, and evaluation logic that the
 notebook previously carried inline. It is designed to keep the notebook clean
 while still exposing detailed, well-documented hooks for experimentation.
+
+This codepath is kept for archival experiments only and is not part of the
+published main training/evaluation pipeline.
 
 Key ideas
 ---------
@@ -74,7 +77,7 @@ def _normalize_quantiles(
 class Chronos2FineTuneConfig:
     """Configuration for Chronos-2 fine-tuning with AutoGluon."""
 
-    dataset_base: str = "data_1to7"
+    dataset_base: str = "data_1to672"
     dataset_dir: Path = Path("data/datasets")
     timestamp_col: str = "timestamp"
 

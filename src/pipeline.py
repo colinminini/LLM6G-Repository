@@ -10,6 +10,7 @@ from typing import Any, Sequence
 import numpy as np
 import torch
 
+from src.config import DEFAULT_DATASET_PATH, DEFAULT_QUANTILES
 from src.models import DeepARForecast, LSTMForecast, TFTForecast
 from src.change_detection import ChangePointDetector, RupturesPeltDetector
 
@@ -57,7 +58,7 @@ class TorchCheckpointForecaster(Forecaster):
         checkpoint_path: str | Path,
         context_length: int = 128,
         forecast_length: int | None = None,
-        quantiles: Sequence[float] = (0.1, 0.5, 0.9),
+        quantiles: Sequence[float] = DEFAULT_QUANTILES,
         residual_sigma: float | None = None,
         enable_residual_fallback: bool = True,
         device: str | torch.device = "cpu",
@@ -490,7 +491,7 @@ def build_forecaster(
     checkpoint_path: str | Path | None = None,
     context_length: int = 128,
     forecast_length: int | None = None,
-    quantiles: Sequence[float] = (0.1, 0.5, 0.9),
+    quantiles: Sequence[float] = DEFAULT_QUANTILES,
     residual_sigma: float | None = None,
     enable_residual_fallback: bool = True,
     chronos_model_id: str = "amazon/chronos-2",
@@ -501,7 +502,7 @@ def build_forecaster(
     name = model_name.lower()
     if name in {"lstm", "deepar", "tft"}:
         if checkpoint_path is None:
-            checkpoint_path = Path("results/models") / f"{name}_quantile_data_1to7_best.pt"
+            checkpoint_path = Path("results/experiments") / f"{DEFAULT_DATASET_PATH.stem}_ctx48_h48" / "q50_q95_seed42" / "checkpoints" / f"{name}_{DEFAULT_DATASET_PATH.stem}_best.pt"
         return TorchCheckpointForecaster(
             model_type=name,
             checkpoint_path=checkpoint_path,

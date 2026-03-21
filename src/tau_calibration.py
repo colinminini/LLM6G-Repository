@@ -19,11 +19,23 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from src.change_detection import RupturesPeltDetector
+from src.config import (
+    DEFAULT_CP_JUMP,
+    DEFAULT_CP_MIN_SIZE,
+    DEFAULT_CP_MODEL,
+    DEFAULT_CP_PENALTY,
+    DEFAULT_DATASET_PATH,
+    DEFAULT_RANDOM_SEED,
+    DEFAULT_TIMESTAMP_COL,
+    DEFAULT_TOLERANCE,
+)
+from src.system_metrics import clamp_upper_quantile, extract_pre_change_interval, json_array, resolve_tau, safe_ceiling_from_tau
 
 
 @dataclass
 class WindowSample:
     model: str
+    split: str
     series: str
     start_index: int
     start_timestamp: pd.Timestamp
@@ -120,30 +132,6 @@ def _parse_models(raw: str) -> list[str]:
     if not models:
         raise ValueError("--models must contain at least one model name.")
     return models
-
-
-def _resolve_tau(tau: int | None, horizon: int) -> int:
-    if tau is None:
-        return int(horizon)
-    return int(np.clip(int(tau), 0, horizon))
-
-
-def _extract_pre_change_interval(values: np.ndarray, tau: int, horizon: int) -> np.ndarray:
-    if tau >= horizon:
-        segment = values[:horizon]
-    else:
-        segment = values[: max(1, tau)]
-    if segment.size == 0:
-        return values[:1]
-    return segment
-
-
-def _safe_ceiling_from_tau(y95: np.ndarray, tau_pred: int, horizon: int) -> float:
-    if tau_pred >= horizon:
-        stationary_95 = y95[:horizon]
-    else:
-        stationary_95 = y95[: max(1, tau_pred)]
-    return float(np.max(stationary_95))
 
 
 def _series_columns(df: pd.DataFrame, timestamp_col: str) -> list[str]:
@@ -271,81 +259,44 @@ def _calendar_features(ts: pd.Timestamp) -> dict[str, float]:
     }
 
 
-def _context_length_from_metrics(
-    metrics_path: Path,
-    explicit_context_length: int | None,
-) -> int:
-    if explicit_context_length is not None:
-        return int(explicit_context_length)
-    payload = json.loads(metrics_path.read_text())
-    value = payload.get("context_length")
-    if value is None:
-        raise ValueError(
-            f"context_length was not found in metrics file {metrics_path}. "
-            "Pass --context-length explicitly."
-        )
-    return int(value)
-
-
 def _load_samples(
     *,
     model_name: str,
+    split: str,
     windows_path: Path,
-    metrics_path: Path,
-    full_df: pd.DataFrame,
-    timestamp_col: str,
     detector: RupturesPeltDetector,
-    context_length: int | None,
 ) -> list[WindowSample]:
-    resolved_context = _context_length_from_metrics(metrics_path, context_length)
-    valid_series = set(_series_columns(full_df, timestamp_col))
     samples: list[WindowSample] = []
 
     windows_df = pd.read_csv(windows_path)
     windows_df["start_timestamp"] = pd.to_datetime(windows_df["start_timestamp"], utc=False)
 
     for row in windows_df.itertuples(index=False):
-        series_name = str(row.series)
-        if series_name not in valid_series:
-            raise ValueError(f"Unknown series '{series_name}' in {windows_path}.")
-
-        start = int(row.start_index)
+        history = json_array(row.history)
+        future_true = json_array(row.future_true)
+        y50 = json_array(row.y_pred_median)
+        y95 = clamp_upper_quantile(y50, json_array(row.y_pred_95))
         horizon = int(row.horizon)
-        if start < resolved_context:
+        context_length = int(row.context_length)
+
+        if history.size != context_length or future_true.size != horizon:
             raise ValueError(
-                f"Window start_index={start} is smaller than context_length={resolved_context}."
+                f"Window artifact mismatch for ({row.series}, start={row.start_index})."
             )
 
-        history = pd.to_numeric(
-            full_df.loc[start - resolved_context : start - 1, series_name],
-            errors="coerce",
-        ).to_numpy(dtype=float)
-        future_true = pd.to_numeric(
-            full_df.loc[start : start + horizon - 1, series_name],
-            errors="coerce",
-        ).to_numpy(dtype=float)
-
-        y50 = np.asarray(json.loads(row.y_pred_median), dtype=float).reshape(-1)
-        y95 = np.asarray(json.loads(row.y_pred_95), dtype=float).reshape(-1)
-        y95 = np.maximum(y95, y50)
-
-        if history.size != resolved_context or future_true.size != horizon:
-            raise ValueError(
-                f"Window reconstruction mismatch for ({series_name}, start={start})."
-            )
-
-        tau_pred = _resolve_tau(detector.detect_first_change_point(y50), horizon)
-        tau_true = _resolve_tau(detector.detect_first_change_point(future_true), horizon)
-        safe_ceiling_raw = _safe_ceiling_from_tau(y95, tau_pred, horizon)
+        tau_pred = resolve_tau(detector.detect_first_change_point(y50), horizon)
+        tau_true = resolve_tau(detector.detect_first_change_point(future_true), horizon)
+        safe_ceiling_raw = safe_ceiling_from_tau(y95, tau_pred, horizon)
 
         samples.append(
             WindowSample(
                 model=model_name,
-                series=series_name,
-                start_index=start,
+                split=split,
+                series=str(row.series),
+                start_index=int(row.start_index),
                 start_timestamp=pd.Timestamp(row.start_timestamp),
                 horizon=horizon,
-                context_length=resolved_context,
+                context_length=context_length,
                 history=history,
                 future_true=future_true,
                 y_pred_median=y50,
@@ -386,6 +337,7 @@ def _build_feature_table(samples: list[WindowSample], series_stats: dict[str, di
 
         row: dict[str, float | int | str] = {
             "model": sample.model,
+            "split": sample.split,
             "series": sample.series,
             "start_index": int(sample.start_index),
             "horizon": int(sample.horizon),
@@ -429,23 +381,6 @@ def _build_feature_table(samples: list[WindowSample], series_stats: dict[str, di
     return pd.DataFrame(rows)
 
 
-def _split_by_start_index(features_df: pd.DataFrame) -> pd.Series:
-    unique_starts = np.array(sorted(features_df["start_index"].astype(int).unique().tolist()))
-    if unique_starts.size < 3:
-        raise ValueError("Need at least three unique start indices for train/val/test split.")
-
-    train_end = unique_starts[int(np.floor(0.6 * (unique_starts.size - 1)))]
-    val_end = unique_starts[int(np.floor(0.8 * (unique_starts.size - 1)))]
-
-    split = pd.Series(index=features_df.index, dtype=object)
-    split.loc[features_df["start_index"] <= train_end] = "train"
-    split.loc[
-        (features_df["start_index"] > train_end) & (features_df["start_index"] <= val_end)
-    ] = "val"
-    split.loc[features_df["start_index"] > val_end] = "test"
-    return split
-
-
 def _corrected_tau(tau_pred: np.ndarray, delta_hat: np.ndarray, horizon: np.ndarray) -> np.ndarray:
     corrected = np.rint(tau_pred + delta_hat).astype(int)
     return np.clip(corrected, 0, horizon.astype(int))
@@ -467,8 +402,8 @@ def _evaluate_predictions(
     for row, tau_hat in zip(df.itertuples(index=False), tau_corr):
         y95 = np.asarray(json.loads(row.y_pred_95), dtype=float)
         future_true = np.asarray(json.loads(row.future_true_json), dtype=float)
-        safe_ceiling = _safe_ceiling_from_tau(y95, int(tau_hat), int(row.horizon))
-        true_interval = _extract_pre_change_interval(
+        safe_ceiling = safe_ceiling_from_tau(y95, int(tau_hat), int(row.horizon))
+        true_interval = extract_pre_change_interval(
             future_true,
             tau=int(row.tau_true),
             horizon=int(row.horizon),
@@ -592,34 +527,33 @@ def _select_best_rows(summary_df: pd.DataFrame, model_name: str) -> list[pd.Seri
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Train and evaluate post-hoc tau calibration models over saved system-eval "
-            "window forecasts."
+            "Train and evaluate post-hoc tau calibration models over saved forecast windows."
         )
     )
     parser.add_argument("--models", default="lstm,deepar,chronos2")
-    parser.add_argument("--timestamp-col", default="timestamp")
-    parser.add_argument("--data-path", type=Path, default=Path("data/data_1to7.csv"))
-    parser.add_argument("--input-dir", type=Path, default=Path("results/evaluation"))
+    parser.add_argument("--timestamp-col", default=DEFAULT_TIMESTAMP_COL)
+    parser.add_argument("--data-path", type=Path, default=DEFAULT_DATASET_PATH)
+    parser.add_argument("--forecast-dir", type=Path, required=True)
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("results/evaluation/tau_calibration"),
+        default=None,
     )
-    parser.add_argument("--context-length", type=int, default=None)
-    parser.add_argument("--tolerance", type=int, default=3)
+    parser.add_argument("--tolerance", type=int, default=DEFAULT_TOLERANCE)
     parser.add_argument("--coverage-target", type=float, default=0.95)
-    parser.add_argument("--cp-model", default="normal")
-    parser.add_argument("--cp-penalty", type=float, default=10.0)
-    parser.add_argument("--cp-min-size", type=int, default=8)
-    parser.add_argument("--cp-jump", type=int, default=1)
-    parser.add_argument("--random-seed", type=int, default=42)
+    parser.add_argument("--cp-model", default=DEFAULT_CP_MODEL)
+    parser.add_argument("--cp-penalty", type=float, default=DEFAULT_CP_PENALTY)
+    parser.add_argument("--cp-min-size", type=int, default=DEFAULT_CP_MIN_SIZE)
+    parser.add_argument("--cp-jump", type=int, default=DEFAULT_CP_JUMP)
+    parser.add_argument("--random-seed", type=int, default=DEFAULT_RANDOM_SEED)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     model_names = _parse_models(args.models)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = args.output_dir or args.forecast_dir.parent / "tau_calibration"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     full_df = pd.read_csv(args.data_path)
     full_df[args.timestamp_col] = pd.to_datetime(full_df[args.timestamp_col], utc=False)
@@ -636,25 +570,22 @@ def main() -> None:
     feature_importance_rows: list[dict[str, Any]] = []
 
     for model_name in model_names:
-        windows_path = args.input_dir / f"{model_name}_window_metrics.csv"
-        metrics_path = args.input_dir / f"{model_name}_metrics.json"
-        if not windows_path.exists():
-            raise FileNotFoundError(f"Missing windows file: {windows_path}")
-        if not metrics_path.exists():
-            raise FileNotFoundError(f"Missing metrics file: {metrics_path}")
+        samples: list[WindowSample] = []
+        for split_name in ("train", "val", "test"):
+            windows_path = args.forecast_dir / split_name / f"{model_name}_forecast_windows.csv"
+            if not windows_path.exists():
+                raise FileNotFoundError(f"Missing windows file: {windows_path}")
+            samples.extend(
+                _load_samples(
+                    model_name=model_name,
+                    split=split_name,
+                    windows_path=windows_path,
+                    detector=detector,
+                )
+            )
 
-        samples = _load_samples(
-            model_name=model_name,
-            windows_path=windows_path,
-            metrics_path=metrics_path,
-            full_df=full_df,
-            timestamp_col=args.timestamp_col,
-            detector=detector,
-            context_length=args.context_length,
-        )
         features_df = _build_feature_table(samples, series_stats)
-        split = _split_by_start_index(features_df)
-        features_df["split"] = split
+        split = features_df["split"].astype(str)
 
         eval_df = pd.DataFrame(
             {
@@ -679,9 +610,9 @@ def main() -> None:
             if col
             not in {
                 "model",
+                "split",
                 "tau_true",
                 "delta_true",
-                "split",
             }
         ]
 
@@ -734,25 +665,25 @@ def main() -> None:
                 }
                 summary_rows.append(row)
 
-                if split_name == "test":
-                    for meta_row, tau_hat, delta_value in zip(
-                        eval_df.loc[mask].itertuples(index=False),
-                        tau_corr,
-                        delta_hat,
-                    ):
-                        prediction_rows.append(
-                            {
-                                "model": model_name,
-                                "calibrator": calibrator_name,
-                                "series": meta_row.series,
-                                "start_index": int(meta_row.start_index),
-                                "start_timestamp": meta_row.start_timestamp,
-                                "tau_pred_raw": int(meta_row.tau_pred_raw),
-                                "tau_true": int(meta_row.tau_true),
-                                "delta_hat": float(delta_value),
-                                "tau_corrected": int(tau_hat),
-                            }
-                        )
+                for meta_row, tau_hat, delta_value in zip(
+                    eval_df.loc[mask].itertuples(index=False),
+                    tau_corr,
+                    delta_hat,
+                ):
+                    prediction_rows.append(
+                        {
+                            "model": model_name,
+                            "calibrator": calibrator_name,
+                            "split": split_name,
+                            "series": meta_row.series,
+                            "start_index": int(meta_row.start_index),
+                            "start_timestamp": meta_row.start_timestamp,
+                            "tau_pred_raw": int(meta_row.tau_pred_raw),
+                            "tau_true": int(meta_row.tau_true),
+                            "delta_hat": float(delta_value),
+                            "tau_corrected": int(tau_hat),
+                        }
+                    )
 
         summary_df = pd.DataFrame(summary_rows)
         raw_test = summary_df[
@@ -820,23 +751,26 @@ def main() -> None:
     for model_name in model_names:
         best_rows.extend(_select_best_rows(summary_df, model_name))
 
-    summary_path = args.output_dir / "tau_calibration_summary.csv"
+    summary_path = output_dir / "tau_calibration_summary.csv"
     summary_df.sort_values(by=["model", "split", "calibrator"]).to_csv(summary_path, index=False)
 
-    best_path = args.output_dir / "tau_calibration_best_test_rows.csv"
+    best_path = output_dir / "tau_calibration_best_test_rows.csv"
     pd.DataFrame(best_rows).to_csv(best_path, index=False)
 
-    predictions_path = args.output_dir / "tau_calibration_test_predictions.csv"
+    predictions_path = output_dir / "tau_calibration_predictions.csv"
     prediction_df.to_csv(predictions_path, index=False)
 
-    feature_importances_path = args.output_dir / "tau_calibration_feature_importances.csv"
+    test_predictions_path = output_dir / "tau_calibration_test_predictions.csv"
+    prediction_df[prediction_df["split"] == "test"].to_csv(test_predictions_path, index=False)
+
+    feature_importances_path = output_dir / "tau_calibration_feature_importances.csv"
     pd.DataFrame(feature_importance_rows).to_csv(feature_importances_path, index=False)
 
     manifest = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "data_path": str(args.data_path),
-        "input_dir": str(args.input_dir),
-        "output_dir": str(args.output_dir),
+        "forecast_dir": str(args.forecast_dir),
+        "output_dir": str(output_dir),
         "models": model_names,
         "tolerance": int(args.tolerance),
         "coverage_target": float(args.coverage_target),
@@ -849,14 +783,16 @@ def main() -> None:
         "summary_csv": str(summary_path),
         "best_test_rows_csv": str(best_path),
         "test_predictions_csv": str(predictions_path),
+        "test_only_predictions_csv": str(test_predictions_path),
         "feature_importances_csv": str(feature_importances_path),
     }
-    manifest_path = args.output_dir / "tau_calibration_manifest.json"
+    manifest_path = output_dir / "tau_calibration_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     print(f"Saved summary: {summary_path}")
     print(f"Saved best test rows: {best_path}")
-    print(f"Saved test predictions: {predictions_path}")
+    print(f"Saved predictions: {predictions_path}")
+    print(f"Saved test predictions: {test_predictions_path}")
     print(f"Saved feature importances: {feature_importances_path}")
     print(f"Saved manifest: {manifest_path}")
 

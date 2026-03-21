@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--quantiles",
-        default="0.1,0.5,0.9",
+        default="0.5,0.95",
         help="Comma-separated list of quantiles to evaluate.",
     )
     parser.add_argument(
@@ -131,7 +131,7 @@ def _display_metrics_table(title: str, metrics: Dict[str, Any]) -> None:
 def _parse_quantiles(raw: str) -> list[float]:
     parts = [part.strip() for part in raw.split(",") if part.strip()]
     if not parts:
-        raise ValueError("quantiles must be a comma-separated list like 0.1,0.5,0.9")
+        raise ValueError("quantiles must be a comma-separated list like 0.5,0.95")
     quantiles = [float(part) for part in parts]
     for q in quantiles:
         if q <= 0.0 or q >= 1.0:

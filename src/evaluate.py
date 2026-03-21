@@ -17,6 +17,7 @@ if __package__ in {None, ""}:
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from src.config import DEFAULT_DATASET_PATH, DEFAULT_QUANTILES
 from src.change_detection import RupturesPeltDetector
 from src.pipeline import HybridForecastingChangePointPipeline, build_forecaster
 
@@ -52,7 +53,7 @@ def _parse_models(raw: str) -> list[str]:
 def _parse_quantiles(raw: str) -> tuple[float, ...]:
     parts = [part.strip() for part in raw.split(",") if part.strip()]
     if not parts:
-        raise ValueError("quantiles must be a comma-separated list like 0.1,0.5,0.9")
+        raise ValueError("quantiles must be a comma-separated list like 0.5,0.95")
     quantiles = tuple(float(part) for part in parts)
     for q in quantiles:
         if q <= 0.0 or q >= 1.0:
@@ -366,7 +367,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-path",
         type=Path,
-        default=Path("data/data_1to7.csv"),
+        default=DEFAULT_DATASET_PATH,
         help="Full dataset CSV used for evaluation.",
     )
     parser.add_argument(
@@ -380,7 +381,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-length", type=int, default=128)
     parser.add_argument(
         "--forecaster-quantiles",
-        default="0.1,0.5,0.9",
+        default="0.5,0.95",
         help="Comma-separated quantile levels expected from quantile models (e.g., 0.5,0.95).",
     )
     parser.add_argument(
@@ -468,17 +469,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lstm-checkpoint",
         type=Path,
-        default=Path("results/models/lstm_quantile_data_1to7_best.pt"),
+        default=Path("results/experiments/data_1to672_ctx48_h48/q50_q95_seed42/checkpoints/lstm_data_1to672_best.pt"),
     )
     parser.add_argument(
         "--deepar-checkpoint",
         type=Path,
-        default=Path("results/models/deepar_quantile_data_1to7_best.pt"),
+        default=Path("results/experiments/data_1to672_ctx48_h48/q50_q95_seed42/checkpoints/deepar_data_1to672_best.pt"),
     )
     parser.add_argument(
         "--tft-checkpoint",
         type=Path,
-        default=Path("results/models/tft_quantile_data_1to7_best.pt"),
+        default=Path("results/experiments/data_1to672_ctx48_h48/q50_q95_seed42/checkpoints/tft_data_1to672_best.pt"),
     )
 
     parser.add_argument("--device", default="cpu")

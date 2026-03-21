@@ -1,9 +1,4 @@
-"""
-DataLoader helpers for training/validation/testing splits.
-
-Splits are expected under data/datasets as:
-  <base>_train.csv, <base>_val.csv, <base>_test.csv
-"""
+"""DataLoader helpers for split-aware training on the canonical full dataset."""
 
 from __future__ import annotations
 
@@ -14,13 +9,16 @@ from typing import Tuple
 import torch
 from torch.utils.data import DataLoader
 
+from src.config import DEFAULT_DATASET_PATH, DEFAULT_TIMESTAMP_COL
 from src.dataset import TrafficWindowDataset
+from src.experiment import ExperimentManifest, load_manifest
 
 
 @dataclass
 class DataLoaderConfig:
-    dataset_base: str = "data_instant"
-    data_dir: Path = Path("data/datasets")
+    data_path: Path = DEFAULT_DATASET_PATH
+    manifest_path: Path | None = None
+    timestamp_col: str = DEFAULT_TIMESTAMP_COL
     context_length: int = 128
     forecast_length: int = 1
     batch_size: int = 64
@@ -31,36 +29,37 @@ class DataLoaderConfig:
     dtype: torch.dtype = torch.float32
 
 
-def _split_paths(data_dir: Path, base: str) -> Tuple[Path, Path, Path]:
-    return (
-        data_dir / f"{base}_train.csv",
-        data_dir / f"{base}_val.csv",
-        data_dir / f"{base}_test.csv",
-    )
-
-
 def build_datasets(config: DataLoaderConfig) -> Tuple[TrafficWindowDataset, ...]:
-    train_path, val_path, test_path = _split_paths(
-        Path(config.data_dir), config.dataset_base
+    manifest: ExperimentManifest | None = (
+        load_manifest(config.manifest_path) if config.manifest_path is not None else None
     )
 
     datasets = (
         TrafficWindowDataset(
-            train_path,
+            config.data_path,
+            split="train",
             context_length=config.context_length,
             forecast_length=config.forecast_length,
+            timestamp_col=config.timestamp_col,
+            manifest=manifest,
             dtype=config.dtype,
         ),
         TrafficWindowDataset(
-            val_path,
+            config.data_path,
+            split="val",
             context_length=config.context_length,
             forecast_length=config.forecast_length,
+            timestamp_col=config.timestamp_col,
+            manifest=manifest,
             dtype=config.dtype,
         ),
         TrafficWindowDataset(
-            test_path,
+            config.data_path,
+            split="test",
             context_length=config.context_length,
             forecast_length=config.forecast_length,
+            timestamp_col=config.timestamp_col,
+            manifest=manifest,
             dtype=config.dtype,
         ),
     )

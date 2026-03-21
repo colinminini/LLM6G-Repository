@@ -4,7 +4,24 @@ Forecasting per-sector traffic to support energy-aware radio access networks usi
 ## Environment
 - Create an isolated environment (e.g., `python3 -m venv .venv && source .venv/bin/activate`).
 - Install dependencies from `requirements.txt` (`pip install -r requirements.txt`). Chronos inference runs on device; GPU is optional.
-- AutoGluon fine-tuning requires `autogluon.timeseries>=1.0` alongside the base PyTorch stack.
+- AutoGluon fine-tuning is legacy-only; the published main pipeline does not require it.
+
+## Canonical workflow
+- The canonical dataset for the published forecasting stack is `data/data_1to672.csv`.
+- Default quantiles are `(0.5, 0.95)` and the default chronological split is `70% train / 10% val / 20% test`.
+- The main reproducible flow is one orchestration command:
+  1. `python src/run_experiment.py --data-path data/data_1to672.csv --context-length 48 --horizon 48 --models lstm,deepar,chronos2`
+  2. open `notebooks/experiment_report.ipynb` and set `EXPERIMENT_DIR` to the generated run directory.
+- The runner executes `prepare_data -> train -> forecast_eval -> system_eval -> cp_sweep -> tau_calibration`, prints stage progress in the terminal, and writes plots plus machine-readable summaries under `results/experiments/.../reports/`.
+- The individual stage scripts under `src/` remain available for debugging or partial reruns, but they are now the implementation backbone rather than the recommended entrypoint.
+- `LSTM` and `DeepAR` are the trainable baselines in the main path. `Chronos-2` is evaluated zero-shot only.
+- `TFT` and `Chronos-2` fine-tuning are retained only as legacy/archival code paths.
+- `notebooks/experiment_report.ipynb` is the only maintained notebook in the main path. Historical notebooks live under `notebooks/legacy/`.
+
+## Legacy note
+- The meeting-log sections below remain for historical context and older experiments.
+- When they mention `data_1to7`, `train_models_display_coverage.ipynb`, or Chronos-2 fine-tuning, treat those as archival rather than the current published workflow.
+- Any notebook path outside `notebooks/experiment_report.ipynb` should be read as legacy and is kept only for reference.
 
 ## Goal and approach
 - We forecast traffic (Mbps) for each antenna sector to inform sleep-mode and energy-management policies.
@@ -161,18 +178,18 @@ The continuous input space is discretized into tokens, called bins.
 ## Top Module (19/03)
 - Corrected the LSTM quantile-loading bug in `src/pipeline.py`: the checkpoint adapter was reshaping the saved head output with an ambiguous `(forecast_length, num_quantiles)` geometry, which corrupted the LSTM `q50` path in `system_eval`. The loader now respects the explicit eval horizon/quantiles, so the multi-step quantile trajectories are consistent again.
 - Change-point detector hyperparameter sweep on top of the saved `system_eval` forecasts:
-  we added `src/cp_sweep.py` and `notebooks/cp_hyperparameter_sweep.ipynb` to sweep `ruptures` PELT settings over the already-saved probabilistic windows (`4300` paired windows/model on `data/data_1to7.csv`) without rerunning the forecasters.
+  we added `src/cp_sweep.py` and the archived `notebooks/legacy/cp_hyperparameter_sweep.ipynb` to sweep `ruptures` PELT settings over the already-saved probabilistic windows (`4300` paired windows/model on `data/data_1to7.csv`) without rerunning the forecasters.
 - Sweep grid:
   `model='normal'`, `jump=1`, `penalty in {10, 15, 20}`, `min_size in {8, 10, 12}`.
 - Result:
   the shared setting `cp_penalty=10`, `cp_min_size=8`, `cp_jump=1` is the best global choice across `LSTM`, `DeepAR`, and `Chronos2`: it improves both `MAE_CP` and tolerance hit rate for all three systems while keeping coverage essentially unchanged.
 - Main system-eval defaults were updated accordingly:
-  `cp_penalty=10`, `cp_min_size=8`, `cp_jump=1` in `src/evaluate.py`, and the main `notebooks/system_eval.ipynb` now uses the same tuned detector.
+  `cp_penalty=10`, `cp_min_size=8`, `cp_jump=1` in `src/evaluate.py`, and the archived `notebooks/legacy/system_eval.ipynb` used the same tuned detector before the runner/report refactor.
 
 ![Change-Point Hyperparameter Sweep Heatmaps](results/plots/cp_hyperparameter_sweep_heatmaps.png)
 
 - Post-hoc `tau` calibration experiment on top of the tuned saved windows:
-  we added `src/tau_calibration.py` and `notebooks/tau_calibration_experiment.ipynb` to learn a correction from saved per-window forecasts and history features (`q50`, `q95`, width, local CP-shape features, history statistics, calendar features, per-series stats) using chronological train/val/test splits.
+  we added `src/tau_calibration.py` and the archived `notebooks/legacy/tau_calibration_experiment.ipynb` to learn a correction from saved per-window forecasts and history features (`q50`, `q95`, width, local CP-shape features, history statistics, calendar features, per-series stats) using chronological train/val/test splits.
 - How the calibration modules were trained:
   they were not trained on the original raw forecasting targets directly; instead we reused the saved `system_eval` windows from `results/evaluation/*_window_metrics.csv` built on `data/data_1to7.csv`, reconstructed each window’s history/future segment, recomputed `tau_pred` and `tau_true` with the tuned CP detector, and then split windows chronologically by `start_index` into `60% train / 20% val / 20% test` before fitting the post-hoc regressors/offset models.
 - Calibration result and interpretation:

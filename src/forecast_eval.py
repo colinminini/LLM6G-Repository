@@ -24,9 +24,11 @@ from src.config import (
     SUPPORTED_MAIN_MODELS,
     parse_quantiles,
 )
+from src.device import AUTO_DEVICE, AUTO_DEVICE_HELP, resolve_device_name
 from src.experiment import (
     build_experiment_manifest,
     build_sampled_starts_map,
+    daily_seasonal_period,
     default_experiment_dir,
     load_manifest,
     load_wide_dataframe,
@@ -60,7 +62,7 @@ def _resolve_checkpoint(
     model_name: str,
     dataset_name: str,
 ) -> Path | None:
-    if model_name == "chronos2":
+    if model_name in {"chronos2", "seasonal_naive"}:
         return None
     if explicit_path is not None:
         return explicit_path
@@ -70,8 +72,8 @@ def _resolve_checkpoint(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare LSTM, DeepAR, and Chronos-2 zero-shot on identical validation/test windows "
-            "and save the forecast paths for downstream system evaluation."
+            "Compare trainable, zero-shot, and seasonal-naive baselines on identical validation/test "
+            "windows and save the forecast paths for downstream system evaluation."
         )
     )
     parser.add_argument("--manifest-path", type=Path, default=None)
@@ -85,7 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.10)
     parser.add_argument("--test-ratio", type=float, default=0.20)
-    parser.add_argument("--models", default="lstm,deepar,chronos2")
+    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
     parser.add_argument("--splits", default="test")
     parser.add_argument("--sampling-mode", choices=("random", "rolling"), default="random")
     parser.add_argument("--random-windows-per-series", type=int, default=50)
@@ -101,12 +103,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chronos-num-samples", type=int, default=100)
     parser.add_argument("--lstm-checkpoint", type=Path, default=None)
     parser.add_argument("--deepar-checkpoint", type=Path, default=None)
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default=AUTO_DEVICE, help=AUTO_DEVICE_HELP)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    device = resolve_device_name(args.device)
     if args.manifest_path is not None:
         manifest = load_manifest(args.manifest_path)
     else:
@@ -135,6 +138,7 @@ def main() -> None:
     run_summary: dict[str, Any] = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "manifest_path": str(manifest_path),
+        "device": device,
         "splits": {},
     }
 
@@ -201,7 +205,8 @@ def main() -> None:
                 quantiles=manifest.quantiles,
                 chronos_model_id=args.chronos_model_id,
                 chronos_num_samples=args.chronos_num_samples,
-                device=args.device,
+                seasonal_period=daily_seasonal_period(manifest.cadence),
+                device=device,
             )
 
             rows: list[dict[str, Any]] = []
@@ -255,6 +260,7 @@ def main() -> None:
                 "context_length": manifest.context_length,
                 "horizon": manifest.horizon,
                 "quantiles": list(manifest.quantiles),
+                "device": device,
                 "num_windows_total": len(rows),
                 "rmse_q50": float(np.sqrt(sse_total / count_total)) if count_total else float("nan"),
                 "pinball_q50": float(q50_pinball_total / count_total) if count_total else float("nan"),

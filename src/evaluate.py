@@ -17,8 +17,9 @@ if __package__ in {None, ""}:
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from src.config import DEFAULT_DATASET_PATH, DEFAULT_QUANTILES
 from src.change_detection import RupturesPeltDetector
+from src.config import DEFAULT_DATASET_PATH, DEFAULT_QUANTILES
+from src.device import AUTO_DEVICE, AUTO_DEVICE_HELP, resolve_device_name
 from src.pipeline import HybridForecastingChangePointPipeline, build_forecaster
 
 
@@ -362,7 +363,7 @@ def parse_args() -> argparse.Namespace:
             "Rolling-window backtest for probabilistic forecast + change-point + safe-ceiling evaluation."
         )
     )
-    parser.add_argument("--models", default="lstm,deepar,chronos2")
+    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
     parser.add_argument("--timestamp-col", default="timestamp")
     parser.add_argument(
         "--data-path",
@@ -482,13 +483,14 @@ def parse_args() -> argparse.Namespace:
         default=Path("results/experiments/data_1to672_ctx48_h48/q50_q95_seed42/checkpoints/tft_data_1to672_best.pt"),
     )
 
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default=AUTO_DEVICE, help=AUTO_DEVICE_HELP)
     parser.add_argument("--output-dir", type=Path, default=Path("results/evaluation"))
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    device = resolve_device_name(args.device)
 
     full_df = pd.read_csv(args.data_path)
     series_cols = _series_columns(full_df, args.timestamp_col)
@@ -542,6 +544,7 @@ def main() -> None:
         "paired_random_windows": bool(args.paired_random_windows),
         "forecaster_quantiles": list(quantiles),
         "chronos_num_samples": int(args.chronos_num_samples),
+        "device": device,
         "models": {},
     }
 
@@ -573,7 +576,7 @@ def main() -> None:
             config=cfg,
             checkpoint_path=checkpoint,
             chronos_model_id=args.chronos_model_id,
-            device=args.device,
+            device=device,
             output_dir=args.output_dir,
             evaluation_start_idx=args.evaluation_start_index,
             dataset_path=str(args.data_path),

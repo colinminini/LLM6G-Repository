@@ -530,7 +530,7 @@ def parse_args() -> argparse.Namespace:
             "Train and evaluate post-hoc tau calibration models over saved forecast windows."
         )
     )
-    parser.add_argument("--models", default="lstm,deepar,chronos2")
+    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
     parser.add_argument("--timestamp-col", default=DEFAULT_TIMESTAMP_COL)
     parser.add_argument("--data-path", type=Path, default=DEFAULT_DATASET_PATH)
     parser.add_argument("--forecast-dir", type=Path, required=True)

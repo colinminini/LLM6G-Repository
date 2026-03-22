@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from src.config import (
     TRAINABLE_BASELINE_MODELS,
     parse_quantiles,
 )
+from src.device import AUTO_DEVICE, AUTO_DEVICE_HELP, resolve_torch_device
 from src.experiment import build_experiment_manifest, default_experiment_dir, load_manifest, save_manifest
 from src.loader import DataLoaderConfig, build_dataloaders
 from src.models import DeepARForecast, LSTMForecast
@@ -59,17 +61,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test-ratio", type=float, default=0.20)
     parser.add_argument("--models", default="lstm,deepar")
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--max-iterations", type=int, default=None)
-    parser.add_argument("--patience-iterations", type=int, default=None)
-    parser.add_argument("--validate-every", type=int, default=None)
+    parser.add_argument("--max-iterations", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--patience-iterations", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--validate-every", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--log-every", type=int, default=None)
-    parser.add_argument("--max-epochs", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--patience", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--max-epochs", type=int, default=50)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--grad-clip", type=float, default=None)
-    parser.add_argument("--device", default=None)
+    parser.add_argument("--device", default=AUTO_DEVICE, help=AUTO_DEVICE_HELP)
     return parser.parse_args()
 
 
@@ -124,9 +126,7 @@ def main() -> None:
     training_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_path = save_manifest(manifest, output_dir / "manifest.json")
-    device = torch.device(
-        args.device if args.device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = resolve_torch_device(args.device)
 
     loader_cfg = DataLoaderConfig(
         data_path=Path(manifest.dataset_path),
@@ -140,35 +140,20 @@ def main() -> None:
     )
     train_loader, val_loader, test_loader = build_dataloaders(loader_cfg)
     steps_per_epoch = max(1, len(train_loader))
-    max_iterations = (
-        args.max_iterations
-        if args.max_iterations is not None
-        else (args.max_epochs * steps_per_epoch if args.max_epochs is not None else 5000)
-    )
-    validate_every = (
-        args.validate_every
-        if args.validate_every is not None
-        else min(250, max_iterations)
-    )
-    validate_every = max(1, min(validate_every, max_iterations))
-    patience_iterations = (
-        args.patience_iterations
-        if args.patience_iterations is not None
-        else (
-            args.patience * validate_every
-            if args.patience is not None
-            else max(validate_every, 1000)
-        )
-    )
-    log_every = args.log_every if args.log_every is not None else max(1, validate_every // 5)
+    max_epochs = int(args.max_epochs)
+    if args.max_iterations is not None:
+        max_epochs = max(1, math.ceil(int(args.max_iterations) / steps_per_epoch))
+    patience_epochs = int(args.patience)
+    if args.patience_iterations is not None:
+        patience_epochs = max(1, math.ceil(int(args.patience_iterations) / steps_per_epoch))
+    log_every = args.log_every if args.log_every is not None else max(1, steps_per_epoch // 5)
 
     run_summary: dict[str, Any] = {
         "manifest_path": str(manifest_path),
         "device": str(device),
         "training_schedule": {
-            "max_iterations": int(max_iterations),
-            "patience_iterations": int(patience_iterations),
-            "validate_every": int(validate_every),
+            "max_epochs": int(max_epochs),
+            "patience_epochs": int(patience_epochs),
             "log_every": int(log_every),
             "steps_per_epoch": int(steps_per_epoch),
         },
@@ -177,9 +162,9 @@ def main() -> None:
     for model_name in _parse_models(args.models):
         print(
             f"[train:{model_name}] starting "
-            f"max_iterations={max_iterations} "
-            f"validate_every={validate_every} "
-            f"patience_iterations={patience_iterations}"
+            f"max_epochs={max_epochs} "
+            f"patience_epochs={patience_epochs} "
+            f"steps_per_epoch={steps_per_epoch}"
         )
         model = _make_model(
             model_name,
@@ -192,9 +177,8 @@ def main() -> None:
         optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
         loss_fn = GaussianNLLLoss() if model_name == "deepar" else QuantileLoss(manifest.quantiles)
         trainer_cfg = TrainerConfig(
-            max_iterations=max_iterations,
-            patience_iterations=patience_iterations,
-            validate_every=validate_every,
+            max_epochs=max_epochs,
+            patience_epochs=patience_epochs,
             log_every=log_every,
             grad_clip=args.grad_clip,
             save_dir=checkpoints_dir,
@@ -224,9 +208,8 @@ def main() -> None:
         run_summary["models"][model_name] = {
             "history_path": str(history_path),
             "checkpoint_path": str(checkpoint_path),
-            "max_iterations": int(max_iterations),
-            "patience_iterations": int(patience_iterations),
-            "validate_every": int(validate_every),
+            "max_epochs": int(max_epochs),
+            "patience_epochs": int(patience_epochs),
         }
 
     summary_path = training_dir / "training_summary.json"

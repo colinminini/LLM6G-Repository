@@ -24,6 +24,7 @@ from src.config import (
     TRAINABLE_BASELINE_MODELS,
     parse_quantiles,
 )
+from src.device import AUTO_DEVICE, AUTO_DEVICE_HELP, resolve_device_name
 from src.experiment import build_experiment_manifest, default_experiment_dir
 from src.reporting import (
     build_report_bundle,
@@ -261,18 +262,14 @@ def _build_stage_command(
             "--device",
             args.device,
         ]
+        if args.log_every is not None:
+            command.extend(["--log-every", str(args.log_every)])
+        command.extend(["--max-epochs", str(args.max_epochs)])
+        command.extend(["--patience", str(args.patience)])
         if args.max_iterations is not None:
             command.extend(["--max-iterations", str(args.max_iterations)])
         if args.patience_iterations is not None:
             command.extend(["--patience-iterations", str(args.patience_iterations)])
-        if args.validate_every is not None:
-            command.extend(["--validate-every", str(args.validate_every)])
-        if args.log_every is not None:
-            command.extend(["--log-every", str(args.log_every)])
-        if args.max_epochs is not None:
-            command.extend(["--max-epochs", str(args.max_epochs)])
-        if args.patience is not None:
-            command.extend(["--patience", str(args.patience)])
         return command
     if stage == "forecast_eval":
         return base + [
@@ -412,7 +409,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.10)
     parser.add_argument("--test-ratio", type=float, default=0.20)
-    parser.add_argument("--models", default="lstm,deepar,chronos2")
+    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
     parser.add_argument("--splits", default="train,val,test")
     parser.add_argument("--system-splits", default="test")
     parser.add_argument("--sampling-mode", choices=("random", "rolling"), default="random")
@@ -423,16 +420,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--independent-windows", dest="paired_windows", action="store_false")
     parser.set_defaults(paired_windows=True)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--max-iterations", type=int, default=None)
-    parser.add_argument("--patience-iterations", type=int, default=None)
-    parser.add_argument("--validate-every", type=int, default=None)
+    parser.add_argument("--max-iterations", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--patience-iterations", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--validate-every", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--log-every", type=int, default=None)
-    parser.add_argument("--max-epochs", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--patience", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--max-epochs", type=int, default=50)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--num-layers", type=int, default=2)
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default=AUTO_DEVICE, help=AUTO_DEVICE_HELP)
     parser.add_argument("--tolerance", type=int, default=3)
     parser.add_argument("--cp-model", default="normal")
     parser.add_argument("--cp-penalty", type=float, default=10.0)
@@ -449,6 +446,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    args.device = resolve_device_name(args.device)
     if args.stages is None:
         requested_stages = list(DEFAULT_STAGE_ORDER)
         if args.with_tau_calibration:

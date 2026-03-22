@@ -7,10 +7,16 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
 
+import src.forecast_eval as forecast_eval_module
+import src.run_experiment as run_experiment_module
+import src.train as train_module
+import src.train_utils as train_utils_module
+from src.device import default_device_type, resolve_device_name
 from src.reporting import (
     _select_example_window_row,
     build_cp_sweep_report,
@@ -119,12 +125,10 @@ class RunnerWorkflowTests(unittest.TestCase):
                     "3",
                     "--batch-size",
                     "8",
-                    "--max-iterations",
-                    "6",
-                    "--patience-iterations",
-                    "6",
-                    "--validate-every",
-                    "3",
+                    "--max-epochs",
+                    "2",
+                    "--patience",
+                    "2",
                     "--log-every",
                     "2",
                     "--hidden-size",
@@ -230,12 +234,10 @@ class RunnerWorkflowTests(unittest.TestCase):
                     "3",
                     "--batch-size",
                     "8",
-                    "--max-iterations",
-                    "6",
-                    "--patience-iterations",
-                    "6",
-                    "--validate-every",
-                    "3",
+                    "--max-epochs",
+                    "2",
+                    "--patience",
+                    "2",
                     "--log-every",
                     "2",
                     "--hidden-size",
@@ -309,11 +311,9 @@ class RunnerWorkflowTests(unittest.TestCase):
                 "lstm",
                 "--batch-size",
                 "8",
-                "--max-iterations",
-                "4",
-                "--patience-iterations",
-                "4",
-                "--validate-every",
+                "--max-epochs",
+                "2",
+                "--patience",
                 "2",
                 "--log-every",
                 "2",
@@ -378,17 +378,123 @@ class RunnerWorkflowTests(unittest.TestCase):
         self.assertIn("stage_status.json", source)
         self.assertIn("example_windows_system_eval_test.png", source)
         self.assertIn("calibrated_system_eval_comparison.csv", source)
-        self.assertIn("('chronos2', 'lstm', 'deepar')", source)
+        self.assertIn("('chronos2', 'lstm', 'deepar', 'seasonal_naive')", source)
         self.assertNotIn("subprocess", source)
         self.assertNotIn("src/train.py", source)
         self.assertNotIn("src/forecast_eval.py", source)
         self.assertNotIn("src/system_eval.py", source)
 
     def test_runner_filters_zero_shot_models_out_of_train_stage(self) -> None:
-        self.assertEqual(_filter_train_models("lstm,deepar,chronos2"), "lstm,deepar")
+        self.assertEqual(_filter_train_models("lstm,deepar,chronos2,seasonal_naive"), "lstm,deepar")
         self.assertEqual(_filter_train_models("chronos2,lstm"), "lstm")
+        self.assertEqual(_filter_train_models("seasonal_naive,lstm"), "lstm")
         with self.assertRaises(ValueError):
             _filter_train_models("chronos2")
+
+    def test_forecast_eval_resolves_no_checkpoint_for_non_trainable_models(self) -> None:
+        self.assertIsNone(
+            forecast_eval_module._resolve_checkpoint(
+                explicit_path=None,
+                output_dir=Path("results/run"),
+                model_name="chronos2",
+                dataset_name="toy",
+            )
+        )
+        self.assertIsNone(
+            forecast_eval_module._resolve_checkpoint(
+                explicit_path=None,
+                output_dir=Path("results/run"),
+                model_name="seasonal_naive",
+                dataset_name="toy",
+            )
+        )
+
+    def test_default_device_prefers_cuda_then_mps_then_cpu(self) -> None:
+        with mock.patch("src.device.torch.cuda.is_available", return_value=True), mock.patch(
+            "src.device.is_mps_available", return_value=True
+        ):
+            self.assertEqual(default_device_type(), "cuda")
+
+        with mock.patch("src.device.torch.cuda.is_available", return_value=False), mock.patch(
+            "src.device.is_mps_available", return_value=True
+        ):
+            self.assertEqual(default_device_type(), "mps")
+
+        with mock.patch("src.device.torch.cuda.is_available", return_value=False), mock.patch(
+            "src.device.is_mps_available", return_value=False
+        ):
+            self.assertEqual(default_device_type(), "cpu")
+
+    def test_training_progress_updates_during_epoch(self) -> None:
+        class _FakeTqdm:
+            def __init__(self, *args, **kwargs) -> None:
+                self.total = kwargs["total"]
+                self.bar_format = kwargs.get("bar_format")
+                self.n = 0.0
+                self.postfix: dict[str, str] | None = None
+                self.closed = False
+
+            def update(self, delta: float) -> None:
+                self.n += delta
+
+            def set_postfix(self, postfix: dict[str, str], refresh: bool = False) -> None:
+                self.postfix = dict(postfix)
+
+            def write(self, message: str) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+        with mock.patch.object(train_utils_module, "tqdm", side_effect=_FakeTqdm):
+            progress = train_utils_module._TrainingProgressDisplay(
+                "demo",
+                total_epochs=5,
+                total_train_batches=20,
+            )
+            fake_bar = progress._bar
+            assert fake_bar is not None
+            progress.update(
+                0.5,
+                phase="train",
+                epoch=1,
+                batch_idx=10,
+                batch_total=20,
+                batch_loss=0.123,
+            )
+            self.assertAlmostEqual(fake_bar.n, 0.5)
+            self.assertIsNotNone(fake_bar.postfix)
+            assert fake_bar.postfix is not None
+            self.assertEqual(
+                fake_bar.bar_format,
+                "{l_bar}{bar}| {n:.2f}/{total:.0f} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
+            )
+            self.assertEqual(fake_bar.postfix["epoch"], "1/5")
+            self.assertEqual(fake_bar.postfix["batch"], "10/20")
+            self.assertEqual(fake_bar.postfix["phase"], "train")
+            self.assertEqual(fake_bar.postfix["batch_loss"], "0.123")
+            self.assertNotEqual(fake_bar.postfix["eta"], "--:--")
+            progress.close()
+            self.assertTrue(fake_bar.closed)
+
+    def test_resolve_device_name_uses_auto_priority(self) -> None:
+        with mock.patch("src.device.torch.cuda.is_available", return_value=False), mock.patch(
+            "src.device.is_mps_available", return_value=True
+        ):
+            self.assertEqual(resolve_device_name("auto"), "mps")
+
+    def test_entrypoint_parsers_default_device_to_auto(self) -> None:
+        with mock.patch.object(sys, "argv", ["run_experiment.py"]):
+            self.assertEqual(run_experiment_module.parse_args().device, "auto")
+        with mock.patch.object(sys, "argv", ["train.py"]):
+            self.assertEqual(train_module.parse_args().device, "auto")
+        with mock.patch.object(sys, "argv", ["forecast_eval.py"]):
+            self.assertEqual(forecast_eval_module.parse_args().device, "auto")
+        if importlib.util.find_spec("ruptures") is not None:
+            import src.evaluate as evaluate_module
+
+            with mock.patch.object(sys, "argv", ["evaluate.py"]):
+                self.assertEqual(evaluate_module.parse_args().device, "auto")
 
     def test_readme_and_notebook_layout_document_canonical_runner(self) -> None:
         repo_root = self._repo_root()

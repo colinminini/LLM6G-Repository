@@ -196,7 +196,7 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--forecast-dir", type=Path, required=True)
-    parser.add_argument("--models", default="lstm,deepar,chronos2")
+    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
     parser.add_argument("--split", default="val")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--cp-models", default=DEFAULT_CP_MODEL)

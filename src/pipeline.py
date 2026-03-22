@@ -10,7 +10,8 @@ from typing import Any, Sequence
 import numpy as np
 import torch
 
-from src.config import DEFAULT_DATASET_PATH, DEFAULT_QUANTILES
+from src.config import DEFAULT_DATASET_PATH, DEFAULT_QUANTILES, DEFAULT_SEASONAL_NAIVE_PERIOD
+from src.device import AUTO_DEVICE, resolve_torch_device
 from src.models import DeepARForecast, LSTMForecast, TFTForecast
 from src.change_detection import ChangePointDetector, RupturesPeltDetector
 
@@ -61,7 +62,7 @@ class TorchCheckpointForecaster(Forecaster):
         quantiles: Sequence[float] = DEFAULT_QUANTILES,
         residual_sigma: float | None = None,
         enable_residual_fallback: bool = True,
-        device: str | torch.device = "cpu",
+        device: str | torch.device = AUTO_DEVICE,
     ) -> None:
         self.model_type = model_type.lower()
         if self.model_type not in {"lstm", "deepar", "tft"}:
@@ -72,7 +73,7 @@ class TorchCheckpointForecaster(Forecaster):
         self.input_quantiles = tuple(float(q) for q in quantiles)
         self.residual_sigma = float(residual_sigma) if residual_sigma is not None else None
         self.enable_residual_fallback = bool(enable_residual_fallback)
-        self.device = torch.device(device)
+        self.device = resolve_torch_device(device)
 
         state_dict = torch.load(self.checkpoint_path, map_location="cpu")
         self.forecast_length = self._resolve_forecast_length(state_dict, forecast_length)
@@ -331,7 +332,7 @@ class Chronos2ZeroShotForecaster(Forecaster):
     def __init__(
         self,
         model_id: str = "amazon/chronos-2",
-        device: str | torch.device = "cpu",
+        device: str | torch.device = AUTO_DEVICE,
         num_samples: int = 100,
     ) -> None:
         try:
@@ -341,13 +342,14 @@ class Chronos2ZeroShotForecaster(Forecaster):
                 "chronos-forecasting is required for Chronos2 zero-shot inference."
             ) from exc
 
-        self.device = torch.device(device)
+        self.device = resolve_torch_device(device)
         # Kept only for backward compatibility with existing CLI args.
         # Chronos2 quantiles are extracted directly from model outputs.
         self.num_samples = int(num_samples)
 
-        device_map = "cuda" if self.device.type == "cuda" else "cpu"
-        self.pipeline = Chronos2Pipeline.from_pretrained(model_id, device_map=device_map)
+        self.pipeline = Chronos2Pipeline.from_pretrained(model_id)
+        self.pipeline.model = self.pipeline.model.to(self.device)
+        self.pipeline.model.eval()
 
     @staticmethod
     def _extract_primary_array(forecast: Any) -> np.ndarray:
@@ -445,6 +447,56 @@ class Chronos2ZeroShotForecaster(Forecaster):
         return ProbabilisticForecast(y_pred_median=y50, y_pred_95=y95)
 
 
+class SeasonalNaiveForecaster(Forecaster):
+    """Daily seasonal-naive baseline with a history-derived q95 margin."""
+
+    def __init__(self, season_length: int = DEFAULT_SEASONAL_NAIVE_PERIOD) -> None:
+        season_length = int(season_length)
+        if season_length <= 0:
+            raise ValueError("season_length must be positive.")
+        self.season_length = season_length
+
+    def _estimate_upper_margin(self, history: np.ndarray) -> float:
+        if history.size > self.season_length:
+            residuals = history[self.season_length :] - history[: -self.season_length]
+        elif history.size > 1:
+            residuals = np.diff(history)
+        else:
+            return 0.0
+
+        residuals = np.asarray(residuals, dtype=float)
+        residuals = residuals[np.isfinite(residuals)]
+        if residuals.size == 0:
+            return 0.0
+        return float(max(np.quantile(residuals, 0.95), 0.0))
+
+    def predict_quantiles(
+        self,
+        history: np.ndarray | list[float],
+        horizon: int,
+    ) -> ProbabilisticForecast:
+        history_arr = np.asarray(history, dtype=float).reshape(-1)
+        if history_arr.size == 0:
+            raise ValueError("History must contain at least one value.")
+        if horizon <= 0:
+            raise ValueError("horizon must be positive.")
+
+        if history_arr.size < self.season_length:
+            y50 = np.repeat(float(history_arr[-1]), int(horizon)).astype(float)
+        else:
+            extended = history_arr.astype(float).tolist()
+            y50_values: list[float] = []
+            for _ in range(int(horizon)):
+                pred = float(extended[-self.season_length])
+                y50_values.append(pred)
+                extended.append(pred)
+            y50 = np.asarray(y50_values, dtype=float)
+
+        margin = self._estimate_upper_margin(history_arr)
+        y95 = np.maximum(y50 + margin, y50)
+        return ProbabilisticForecast(y_pred_median=y50, y_pred_95=y95)
+
+
 class HybridForecastingChangePointPipeline:
     """Runs q50/q95 forecast -> first change-point -> safe ceiling."""
 
@@ -496,7 +548,8 @@ def build_forecaster(
     enable_residual_fallback: bool = True,
     chronos_model_id: str = "amazon/chronos-2",
     chronos_num_samples: int = 100,
-    device: str | torch.device = "cpu",
+    seasonal_period: int = DEFAULT_SEASONAL_NAIVE_PERIOD,
+    device: str | torch.device = AUTO_DEVICE,
 ) -> Forecaster:
     """Factory for supported forecasters."""
     name = model_name.lower()
@@ -519,7 +572,9 @@ def build_forecaster(
             device=device,
             num_samples=chronos_num_samples,
         )
+    if name in {"seasonal_naive", "seasonal-naive", "seasonalnaive"}:
+        return SeasonalNaiveForecaster(season_length=seasonal_period)
 
     raise ValueError(
-        "Unsupported model_name. Expected one of: lstm, deepar, tft, chronos2."
+        "Unsupported model_name. Expected one of: lstm, deepar, tft, chronos2, seasonal_naive."
     )

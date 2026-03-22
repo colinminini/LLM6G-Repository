@@ -17,11 +17,12 @@ from src.experiment import (
     build_experiment_manifest,
     build_sampled_starts_map,
     cadence_from_timestamps,
+    daily_seasonal_period,
     validate_regular_timestamps,
     valid_window_start_indices,
 )
 from src.models import DeepARForecast, LSTMForecast
-from src.pipeline import TorchCheckpointForecaster
+from src.pipeline import SeasonalNaiveForecaster, TorchCheckpointForecaster
 
 
 def _write_dataset(
@@ -52,6 +53,8 @@ class SplitPipelineTests(unittest.TestCase):
         self.assertEqual(cadence_from_timestamps(ten_min)[1], "10min")
         self.assertEqual(cadence_from_timestamps(fifteen_min)[1], "15min")
         self.assertEqual(cadence_from_timestamps(forty_five_min)[1], "45min")
+        self.assertEqual(daily_seasonal_period("10min"), 144)
+        self.assertEqual(daily_seasonal_period("15min"), 96)
 
     def test_regular_timestamp_validation_rejects_malformed_and_irregular_inputs(self) -> None:
         with self.assertRaisesRegex(ValueError, "malformed timestamps"):
@@ -195,6 +198,18 @@ class SplitPipelineTests(unittest.TestCase):
             self.assertEqual(tuple(deepar_pred.y_pred_95.shape), (horizon,))
             self.assertTrue(np.all(deepar_pred.y_pred_95 >= deepar_pred.y_pred_median))
 
+    def test_seasonal_naive_forecaster_uses_daily_lag_and_fallback(self) -> None:
+        forecaster = SeasonalNaiveForecaster(season_length=4)
+        history = np.asarray([1.0, 2.0, 3.0, 4.0, 11.0, 12.0, 13.0, 14.0], dtype=float)
+        pred = forecaster.predict_quantiles(history, horizon=4)
+        np.testing.assert_allclose(pred.y_pred_median, np.asarray([11.0, 12.0, 13.0, 14.0]))
+        self.assertTrue(np.all(pred.y_pred_95 >= pred.y_pred_median))
+
+        short_history = np.asarray([5.0, 6.0], dtype=float)
+        short_pred = forecaster.predict_quantiles(short_history, horizon=3)
+        np.testing.assert_allclose(short_pred.y_pred_median, np.asarray([6.0, 6.0, 6.0]))
+        self.assertTrue(np.all(short_pred.y_pred_95 >= short_pred.y_pred_median))
+
     @unittest.skipUnless(
         importlib.util.find_spec("ruptures") and importlib.util.find_spec("sklearn"),
         "ruptures and scikit-learn are required for the integration smoke test",
@@ -231,11 +246,9 @@ class SplitPipelineTests(unittest.TestCase):
                 str(run_dir),
                 "--models",
                 "lstm",
-                "--max-iterations",
-                "4",
-                "--patience-iterations",
-                "4",
-                "--validate-every",
+                "--max-epochs",
+                "2",
+                "--patience",
                 "2",
                 "--log-every",
                 "2",
@@ -250,7 +263,7 @@ class SplitPipelineTests(unittest.TestCase):
             )
             self.assertTrue((run_dir / "checkpoints" / "lstm_toy_best.pt").exists())
             history = json.loads((run_dir / "training" / "lstm_history.json").read_text())
-            self.assertEqual(history["iteration"], [2, 4])
+            self.assertEqual(history["epoch"], [1, 2])
 
             run_cmd(
                 "src/forecast_eval.py",
@@ -364,11 +377,9 @@ class SplitPipelineTests(unittest.TestCase):
                 str(run_dir),
                 "--models",
                 "lstm",
-                "--max-iterations",
-                "4",
-                "--patience-iterations",
-                "4",
-                "--validate-every",
+                "--max-epochs",
+                "2",
+                "--patience",
                 "2",
                 "--log-every",
                 "2",

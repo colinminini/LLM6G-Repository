@@ -16,6 +16,11 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+try:
+    from tqdm.auto import tqdm
+except ImportError:  # pragma: no cover - optional dependency
+    tqdm = None
+
 if __package__ in {None, ""}:
     import sys
 
@@ -29,11 +34,11 @@ from src.models import DeepARForecast, LSTMForecast
 
 @dataclass
 class TrainerConfig:
-    max_iterations: int = 5000
-    patience_iterations: int = 1000
-    validate_every: int = 250
+    max_epochs: int = 50
+    patience_epochs: int = 10
     log_every: int = 50
     grad_clip: float | None = None
+    show_batch_logs: bool = False
     save_dir: Path = Path("results/models")
     log_dir: Path = Path("results/logs")
     run_name: str = "run"
@@ -109,6 +114,127 @@ def _display_metrics_table(title: str, metrics: Dict[str, Any]) -> None:
     print(separator)
 
 
+def _format_duration(seconds: float | None) -> str:
+    if seconds is None or not math.isfinite(seconds):
+        return "--:--"
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+class _TrainingProgressDisplay:
+    def __init__(self, run_name: str, total_epochs: int, total_train_batches: int) -> None:
+        self.run_name = run_name
+        self.total_epochs = max(1, int(total_epochs))
+        self.total_train_batches = max(1, int(total_train_batches))
+        self.started_at = time.perf_counter()
+        self.completed_progress = 0.0
+        self._bar = (
+            tqdm(
+                total=self.total_epochs,
+                desc=f"train:{run_name}",
+                unit="epoch",
+                dynamic_ncols=True,
+                mininterval=0.5,
+                smoothing=0.15,
+                leave=True,
+                bar_format=(
+                    "{l_bar}{bar}| {n:.2f}/{total:.0f} "
+                    "[{elapsed}<{remaining}, {rate_fmt}{postfix}]"
+                ),
+            )
+            if tqdm is not None
+            else None
+        )
+        self.update(0, phase="warmup")
+
+    def _timings(self, completed_progress: float) -> tuple[float, float | None, float | None]:
+        elapsed = time.perf_counter() - self.started_at
+        if completed_progress <= 0:
+            return elapsed, None, None
+        estimated_total = elapsed * self.total_epochs / completed_progress
+        remaining = max(0.0, estimated_total - elapsed)
+        return elapsed, estimated_total, remaining
+
+    def update(
+        self,
+        progress_epoch: float,
+        *,
+        phase: str,
+        epoch: int | None = None,
+        batch_idx: int | None = None,
+        batch_total: int | None = None,
+        batch_loss: float | None = None,
+        train_loss: float | None = None,
+        val_loss: float | None = None,
+        test_loss: float | None = None,
+        patience: str | None = None,
+    ) -> None:
+        target_progress = max(0.0, min(float(progress_epoch), float(self.total_epochs)))
+        delta = target_progress - self.completed_progress
+        if self._bar is not None and delta > 0:
+            self._bar.update(delta)
+        self.completed_progress = target_progress
+
+        elapsed, estimated_total, remaining = self._timings(self.completed_progress)
+        postfix: dict[str, str] = {
+            "phase": phase,
+            "elapsed": _format_duration(elapsed),
+            "eta": _format_duration(remaining),
+            "est_total": _format_duration(estimated_total),
+        }
+        if epoch is not None:
+            postfix["epoch"] = f"{min(int(epoch), self.total_epochs)}/{self.total_epochs}"
+        if batch_idx is not None and batch_total is not None:
+            postfix["batch"] = f"{batch_idx}/{batch_total}"
+        if batch_loss is not None:
+            postfix["batch_loss"] = f"{batch_loss:.3f}"
+        if train_loss is not None:
+            postfix["train_loss"] = f"{train_loss:.3f}"
+        if val_loss is not None:
+            postfix["val_loss"] = f"{val_loss:.3f}"
+        if test_loss is not None:
+            postfix["test_loss"] = f"{test_loss:.3f}"
+        if patience is not None:
+            postfix["patience"] = patience
+
+        if self._bar is not None:
+            self._bar.set_postfix(postfix, refresh=False)
+        elif target_progress > 0:
+            print(
+                f"[{self.run_name}] progress "
+                f"{target_progress:.2f}/{self.total_epochs} "
+                f"phase={phase} elapsed={postfix['elapsed']} "
+                f"eta={postfix['eta']} est_total={postfix['est_total']}"
+            )
+
+    def write(self, message: str) -> None:
+        if self._bar is not None:
+            self._bar.write(message)
+        else:
+            print(message)
+
+    def close(self) -> None:
+        total_elapsed = time.perf_counter() - self.started_at
+        completed_epochs = min(self.total_epochs, int(self.completed_progress + 1e-9))
+        self.update(
+            self.completed_progress,
+            phase="done" if completed_epochs >= self.total_epochs else "stopped",
+            epoch=max(1, completed_epochs) if completed_epochs > 0 else 1,
+            batch_idx=self.total_train_batches,
+            batch_total=self.total_train_batches,
+        )
+        self.write(
+            f"[{self.run_name}] wall_time={_format_duration(total_elapsed)} "
+            f"completed_epochs={completed_epochs}/{self.total_epochs}"
+        )
+        if self._bar is not None:
+            self._bar.close()
+
+
 class QuantileLoss(nn.Module):
     """Pinball loss for quantile regression."""
 
@@ -180,7 +306,7 @@ class GaussianNLLLoss(nn.Module):
 
 
 class Trainer:
-    """Train a model with iteration-based early stopping."""
+    """Train a model with epoch-based early stopping."""
 
     def __init__(
         self,
@@ -382,7 +508,7 @@ class Trainer:
                     quantile_preds=quantile_preds.detach() if quantile_preds is not None else None,
                 )
                 writer.add_scalar(f"loss/{phase}_batch", loss.item(), step)
-                if batch_idx % max(1, self.config.log_every) == 0:
+                if self.config.show_batch_logs and batch_idx % max(1, self.config.log_every) == 0:
                     print(
                         f"[{self.config.run_name}] {phase} batch {batch_idx} "
                         f"step={step} loss={loss.item():.3f}"
@@ -396,7 +522,7 @@ class Trainer:
         test_loader: DataLoader | None = None,
     ) -> Dict[str, List[float]]:
         history: Dict[str, List[float]] = {
-            "iteration": [],
+            "epoch": [],
             "train_loss": [],
             "train_rmse": [],
             "val_loss": [],
@@ -412,65 +538,74 @@ class Trainer:
             history["test_coverage"] = []
             history["test_interval_width"] = []
         best_metric: float | None = None
-        patience_iterations_used = 0
+        patience_epochs_used = 0
         writer = SummaryWriter(log_dir=self.config.log_dir / self.config.run_name)
         best_path = self.config.save_dir / f"{self.config.run_name}_best.pt"
         last_summary: Dict[str, Any] | None = None
+        total_train_batches = max(1, len(train_loader))
+        progress = _TrainingProgressDisplay(
+            self.config.run_name,
+            self.config.max_epochs,
+            total_train_batches,
+        )
 
         try:
-            train_iter = iter(train_loader)
-            interval_acc = self._make_metrics_accumulator()
-            interval_start = time.perf_counter()
-            validate_every = max(1, min(self.config.validate_every, self.config.max_iterations))
             log_every = max(1, self.config.log_every)
+            global_step = 0
 
-            for iteration in range(1, self.config.max_iterations + 1):
-                try:
-                    batch = next(train_iter)
-                except StopIteration:
-                    train_iter = iter(train_loader)
-                    batch = next(train_iter)
+            for epoch in range(1, self.config.max_epochs + 1):
+                interval_acc = self._make_metrics_accumulator()
+                interval_start = time.perf_counter()
+                last_batch_loss: float | None = None
 
-                if isinstance(batch, (list, tuple)) and len(batch) == 2:
-                    inputs, targets = batch
-                else:
-                    raise ValueError("Expected batch to be a (inputs, targets) tuple.")
+                for batch_idx, batch in enumerate(train_loader, start=1):
+                    if isinstance(batch, (list, tuple)) and len(batch) == 2:
+                        inputs, targets = batch
+                    else:
+                        raise ValueError("Expected batch to be a (inputs, targets) tuple.")
 
-                self.model.train()
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
-                if targets.dim() == 1:
-                    targets = targets.unsqueeze(-1)
+                    self.model.train()
+                    inputs = inputs.to(self.device)
+                    targets = targets.to(self.device)
+                    if targets.dim() == 1:
+                        targets = targets.unsqueeze(-1)
 
-                self.optimizer.zero_grad(set_to_none=True)
-                loss, preds_for_rmse, quantile_preds = self._forward_batch(inputs, targets)
-                loss.backward()
-                if self.config.grad_clip is not None:
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
-                self.optimizer.step()
+                    self.optimizer.zero_grad(set_to_none=True)
+                    loss, preds_for_rmse, quantile_preds = self._forward_batch(inputs, targets)
+                    loss.backward()
+                    if self.config.grad_clip is not None:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+                    self.optimizer.step()
+                    global_step += 1
+                    last_batch_loss = float(loss.item())
 
-                self._update_metrics_accumulator(
-                    interval_acc,
-                    loss=loss.detach(),
-                    preds_for_rmse=preds_for_rmse.detach(),
-                    targets=targets.detach(),
-                    quantile_preds=quantile_preds.detach() if quantile_preds is not None else None,
-                )
-                writer.add_scalar("loss/train_batch", loss.item(), iteration)
-                writer.add_scalar(
-                    "metrics/learning_rate",
-                    self.optimizer.param_groups[0]["lr"],
-                    iteration,
-                )
-                if iteration == 1 or iteration % log_every == 0:
-                    print(
-                        f"[{self.config.run_name}] train iter "
-                        f"{iteration}/{self.config.max_iterations} "
-                        f"batch_loss={loss.item():.3f}"
+                    self._update_metrics_accumulator(
+                        interval_acc,
+                        loss=loss.detach(),
+                        preds_for_rmse=preds_for_rmse.detach(),
+                        targets=targets.detach(),
+                        quantile_preds=quantile_preds.detach() if quantile_preds is not None else None,
                     )
-
-                if iteration % validate_every != 0 and iteration != self.config.max_iterations:
-                    continue
+                    writer.add_scalar("loss/train_batch", loss.item(), global_step)
+                    writer.add_scalar(
+                        "metrics/learning_rate",
+                        self.optimizer.param_groups[0]["lr"],
+                        global_step,
+                    )
+                    progress.update(
+                        (epoch - 1) + (batch_idx / total_train_batches),
+                        phase="train",
+                        epoch=epoch,
+                        batch_idx=batch_idx,
+                        batch_total=total_train_batches,
+                        batch_loss=last_batch_loss,
+                    )
+                    if self.config.show_batch_logs and batch_idx % log_every == 0:
+                        progress.write(
+                            f"[{self.config.run_name}] epoch {epoch}/{self.config.max_epochs} "
+                            f"batch {batch_idx}/{total_train_batches} "
+                            f"batch_loss={loss.item():.3f}"
+                        )
 
                 (
                     train_loss,
@@ -490,10 +625,10 @@ class Trainer:
                     val_loader,
                     phase="val",
                     writer=writer,
-                    step=iteration,
+                    step=epoch,
                 )
 
-                history["iteration"].append(iteration)
+                history["epoch"].append(epoch)
                 history["train_loss"].append(train_loss)
                 history["train_rmse"].append(train_rmse)
                 history["val_loss"].append(val_loss)
@@ -511,20 +646,20 @@ class Trainer:
                     val_width if val_width is not None else float("nan")
                 )
 
-                writer.add_scalar("loss/train", train_loss, iteration)
-                writer.add_scalar("loss/val", val_loss, iteration)
-                writer.add_scalar("rmse/train", train_rmse, iteration)
-                writer.add_scalar("rmse/val", val_rmse, iteration)
-                self._log_quantile_metrics(writer, "train", train_quantiles, iteration)
-                self._log_quantile_metrics(writer, "val", val_quantiles, iteration)
+                writer.add_scalar("loss/train", train_loss, epoch)
+                writer.add_scalar("loss/val", val_loss, epoch)
+                writer.add_scalar("rmse/train", train_rmse, epoch)
+                writer.add_scalar("rmse/val", val_rmse, epoch)
+                self._log_quantile_metrics(writer, "train", train_quantiles, epoch)
+                self._log_quantile_metrics(writer, "val", val_quantiles, epoch)
                 if train_coverage is not None:
-                    writer.add_scalar("coverage/train", train_coverage, iteration)
+                    writer.add_scalar("coverage/train", train_coverage, epoch)
                 if val_coverage is not None:
-                    writer.add_scalar("coverage/val", val_coverage, iteration)
+                    writer.add_scalar("coverage/val", val_coverage, epoch)
                 if train_width is not None:
-                    writer.add_scalar("interval_width/train", train_width, iteration)
+                    writer.add_scalar("interval_width/train", train_width, epoch)
                 if val_width is not None:
-                    writer.add_scalar("interval_width/val", val_width, iteration)
+                    writer.add_scalar("interval_width/val", val_width, epoch)
 
                 if test_loader is not None:
                     (
@@ -535,7 +670,7 @@ class Trainer:
                         test_width,
                     ) = self.evaluate(
                         test_loader,
-                        step=iteration,
+                        step=epoch,
                         writer=writer,
                     )
                     history["test_loss"].append(test_loss)
@@ -546,26 +681,25 @@ class Trainer:
                     history["test_interval_width"].append(
                         test_width if test_width is not None else float("nan")
                     )
-                    writer.add_scalar("loss/test", test_loss, iteration)
-                    writer.add_scalar("rmse/test", test_rmse, iteration)
-                    self._log_quantile_metrics(writer, "test", test_quantiles, iteration)
+                    writer.add_scalar("loss/test", test_loss, epoch)
+                    writer.add_scalar("rmse/test", test_rmse, epoch)
+                    self._log_quantile_metrics(writer, "test", test_quantiles, epoch)
                     if test_coverage is not None:
-                        writer.add_scalar("coverage/test", test_coverage, iteration)
+                        writer.add_scalar("coverage/test", test_coverage, epoch)
                     if test_width is not None:
-                        writer.add_scalar("interval_width/test", test_width, iteration)
+                        writer.add_scalar("interval_width/test", test_width, epoch)
 
                 interval_time = time.perf_counter() - interval_start
                 eval_time = time.perf_counter() - eval_start
-                writer.add_scalar("metrics/train_interval_time_sec", interval_time, iteration)
-                writer.add_scalar("metrics/eval_time_sec", eval_time, iteration)
+                writer.add_scalar("metrics/train_epoch_time_sec", interval_time, epoch)
+                writer.add_scalar("metrics/eval_time_sec", eval_time, epoch)
 
                 monitor_name, monitor_value, monitor_mode = self._select_monitor_value(
                     val_loss, val_coverage
                 )
-                interval_iterations = int(interval_acc["num_batches"])
                 if best_metric is None:
                     best_metric = monitor_value
-                    patience_iterations_used = 0
+                    patience_epochs_used = 0
                     self._save_weights(best_path)
                 else:
                     improved = (
@@ -575,19 +709,31 @@ class Trainer:
                     )
                     if improved:
                         best_metric = monitor_value
-                        patience_iterations_used = 0
+                        patience_epochs_used = 0
                         self._save_weights(best_path)
                     else:
-                        patience_iterations_used += interval_iterations
-                writer.add_scalar("metrics/best_val", best_metric, iteration)
+                        patience_epochs_used += 1
+                writer.add_scalar("metrics/best_val", best_metric, epoch)
                 writer.add_scalar(
-                    "metrics/patience_iterations",
-                    patience_iterations_used,
-                    iteration,
+                    "metrics/patience_epochs",
+                    patience_epochs_used,
+                    epoch,
+                )
+                progress.update(
+                    float(epoch),
+                    phase="eval",
+                    epoch=epoch,
+                    batch_idx=total_train_batches,
+                    batch_total=total_train_batches,
+                    batch_loss=last_batch_loss,
+                    train_loss=float(train_loss),
+                    val_loss=float(val_loss),
+                    test_loss=float(test_loss) if test_loader is not None else None,  # pyright: ignore[reportPossiblyUnboundVariable]
+                    patience=f"{patience_epochs_used}/{self.config.patience_epochs}",
                 )
 
                 last_summary = {
-                    "iteration": iteration,
+                    "epoch": epoch,
                     "train_loss": train_loss,
                     "train_rmse": train_rmse,
                     "val_loss": val_loss,
@@ -600,7 +746,7 @@ class Trainer:
                     "val_width": val_width,
                     "best_val": best_metric,
                     "monitor_name": monitor_name,
-                    "patience_iterations": patience_iterations_used,
+                    "patience_epochs": patience_epochs_used,
                 }
                 if test_loader is not None:
                     last_summary.update(
@@ -614,7 +760,7 @@ class Trainer:
                     )
 
                 message = (
-                    f"[{self.config.run_name}] iter {iteration}/{self.config.max_iterations} "
+                    f"[{self.config.run_name}] epoch {epoch}/{self.config.max_epochs} "
                     f"- train_loss={train_loss:.3f} "
                     f"- train_rmse={train_rmse:.3f} "
                     f"- val_loss={val_loss:.3f} "
@@ -624,16 +770,16 @@ class Trainer:
                     message += (
                         f"- test_loss={test_loss:.3f} "  # pyright: ignore[reportPossiblyUnboundVariable]
                         f"- test_rmse={test_rmse:.3f} "  # pyright: ignore[reportPossiblyUnboundVariable]
-                    )
-                message += (
-                    f"- patience_iters={patience_iterations_used}/{self.config.patience_iterations}"
                 )
-                print(message)
+                message += (
+                    f"- patience_epochs={patience_epochs_used}/{self.config.patience_epochs}"
+                )
+                progress.write(message)
 
-                if patience_iterations_used >= self.config.patience_iterations:
-                    print(
-                        f"[{self.config.run_name}] Early stopping at iteration "
-                        f"{iteration}: train_rmse={train_rmse:.3f}, val_rmse={val_rmse:.3f}"
+                if patience_epochs_used >= self.config.patience_epochs:
+                    progress.write(
+                        f"[{self.config.run_name}] Early stopping at epoch "
+                        f"{epoch}: train_rmse={train_rmse:.3f}, val_rmse={val_rmse:.3f}"
                         + (
                             f", test_rmse={test_rmse:.3f}"  # pyright: ignore[reportPossiblyUnboundVariable]
                             if test_loader is not None
@@ -641,10 +787,8 @@ class Trainer:
                         )
                     )
                     break
-
-                interval_acc = self._make_metrics_accumulator()
-                interval_start = time.perf_counter()
         finally:
+            progress.close()
             writer.close()
 
         if last_summary is not None:
@@ -678,9 +822,9 @@ class Trainer:
                 if last_summary.get("test_width") is not None:
                     metrics["test_interval_width"] = last_summary.get("test_width")
             metrics["best_val"] = last_summary["best_val"]
-            metrics["last_iteration"] = last_summary["iteration"]
-            metrics["patience_iterations"] = (
-                f"{last_summary['patience_iterations']}/{self.config.patience_iterations}"
+            metrics["last_epoch"] = last_summary["epoch"]
+            metrics["patience_epochs"] = (
+                f"{last_summary['patience_epochs']}/{self.config.patience_epochs}"
             )
             if last_summary.get("monitor_name"):
                 metrics["monitor"] = last_summary["monitor_name"]
@@ -730,9 +874,10 @@ def train_model(
     context_length: int = 128,
     forecast_length: int = 1,
     batch_size: int = 64,
-    max_iterations: int = 5000,
-    patience_iterations: int = 1000,
-    validate_every: int = 250,
+    max_epochs: int = 50,
+    patience_epochs: int = 10,
+    max_iterations: int | None = None,
+    patience_iterations: int | None = None,
     log_every: int = 50,
     learning_rate: float = 1e-3,
     hidden_size: int = 128,
@@ -775,6 +920,11 @@ def train_model(
         pin_memory=device.type == "cuda",
     )
     train_loader, val_loader, test_loader = build_dataloaders(data_cfg)
+    steps_per_epoch = max(1, len(train_loader))
+    if max_iterations is not None:
+        max_epochs = max(1, math.ceil(int(max_iterations) / steps_per_epoch))
+    if patience_iterations is not None:
+        patience_epochs = max(1, math.ceil(int(patience_iterations) / steps_per_epoch))
 
     if model_type == "lstm":
         model = LSTMForecast(
@@ -811,9 +961,8 @@ def train_model(
         loss_fn = QuantileLoss(manifest.quantiles)
 
     trainer_cfg = TrainerConfig(
-        max_iterations=max_iterations,
-        patience_iterations=patience_iterations,
-        validate_every=min(validate_every, max_iterations),
+        max_epochs=max_epochs,
+        patience_epochs=patience_epochs,
         log_every=log_every,
         save_dir=root_dir / "checkpoints",
         log_dir=root_dir / "logs",
@@ -848,9 +997,8 @@ def train_all(
     context_length: int,
     forecast_length: int,
     quantiles: Sequence[float],
-    max_iterations: int,
-    patience_iterations: int,
-    validate_every: int,
+    max_epochs: int,
+    patience_epochs: int,
     log_every: int,
     hidden_size: int,
     num_layers: int,
@@ -867,9 +1015,8 @@ def train_all(
             context_length=context_length,
             forecast_length=forecast_length,
             quantiles=quantiles,
-            max_iterations=max_iterations,
-            patience_iterations=patience_iterations,
-            validate_every=validate_every,
+            max_epochs=max_epochs,
+            patience_epochs=patience_epochs,
             log_every=log_every,
             hidden_size=hidden_size,
             num_layers=num_layers,
@@ -904,12 +1051,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-length", type=int, default=128)
     parser.add_argument("--forecast-length", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--max-iterations", type=int, default=5000)
-    parser.add_argument("--patience-iterations", type=int, default=1000)
-    parser.add_argument("--validate-every", type=int, default=250)
+    parser.add_argument("--max-iterations", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--patience-iterations", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--validate-every", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--log-every", type=int, default=50)
-    parser.add_argument("--max-epochs", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--patience", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--max-epochs", type=int, default=50)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--num-layers", type=int, default=2)
@@ -935,13 +1082,10 @@ def main() -> None:
         context_length=args.context_length,
         forecast_length=args.forecast_length,
         batch_size=args.batch_size,
-        max_iterations=args.max_iterations if args.max_iterations is not None else 5000,
-        patience_iterations=(
-            args.patience_iterations
-            if args.patience_iterations is not None
-            else 1000
-        ),
-        validate_every=args.validate_every if args.validate_every is not None else 250,
+        max_epochs=args.max_epochs,
+        patience_epochs=args.patience,
+        max_iterations=args.max_iterations,
+        patience_iterations=args.patience_iterations,
         log_every=args.log_every if args.log_every is not None else 50,
         learning_rate=args.learning_rate,
         hidden_size=args.hidden_size,

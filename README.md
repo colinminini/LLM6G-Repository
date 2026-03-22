@@ -7,7 +7,7 @@ Codebase for the paper:
 - The paper studies a **shift-aware forecast-to-control pipeline** on public telecom traffic.
 - The benchmark is built from the public **TIM Milan** dataset.
 - The main comparison is:
-  `LSTM`, `DeepAR`, and `Chronos-2` in zero-shot mode.
+  `seasonal_naive`, `LSTM`, `DeepAR`, and `Chronos-2` in zero-shot mode.
 
 ## Paper claim
 - Traffic control should account for the **next change of distribution**, not only point accuracy.
@@ -46,6 +46,8 @@ Codebase for the paper:
   stable figures used in the README and paper
 - `notebooks/experiment_report.ipynb`
   maintained report notebook for a finished run
+- `notebooks/legacy/`
+  archived exploratory notebooks kept outside the paper-facing workflow
 - `experiment_notes.md`
   archival notes, older experiments, and meeting-log material
 
@@ -91,9 +93,20 @@ Codebase for the paper:
 
 ## Run the published experiment
 - Main command:
-  `python src/run_experiment.py --data-path data/data_tim_milan_10min_trainable_200.csv --context-length 48 --horizon 48 --models lstm,deepar,chronos2`
+  `python src/run_experiment.py \
+  --overwrite \
+  --with-tau-calibration \
+  --data-path data/data_tim_milan_10min_trainable_200.csv \
+  --context-length 144 \
+  --horizon 48 \
+  --models lstm,deepar,chronos2 \
+  --max-epochs 5 \
+  --patience 2`
 - This runs:
   `prepare_data -> train -> forecast_eval -> system_eval -> cp_sweep -> tau_calibration`
+- `seasonal_naive`:
+  copy the value from the same time one day earlier,
+  then add a simple history-derived upper margin for `q95`
 - Main experiment directory:
   `results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42`
 - The pipeline is cadence-flexible.

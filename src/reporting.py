@@ -76,7 +76,7 @@ def _select_example_window_row(
     window_dir: str | Path,
     *,
     window_suffix: str,
-    models: Sequence[str] = ("lstm", "deepar", "chronos2"),
+    models: Sequence[str] = ("lstm", "deepar", "chronos2", "seasonal_naive"),
     preferred_model: str = PREFERRED_EXAMPLE_MODEL,
 ) -> tuple[str, pd.Series] | None:
     window_dir = Path(window_dir)
@@ -194,7 +194,7 @@ def build_training_report(experiment_dir: str | Path) -> dict[str, str]:
         for history_path in history_paths:
             payload = _read_json(history_path)
             model_name = history_path.name.replace("_history.json", "")
-            x_values = payload.get("iteration")
+            x_values = payload.get("epoch", payload.get("iteration"))
             for split in ("train", "val", "test"):
                 key = f"{split}_{metric_key}"
                 if key in payload:
@@ -221,7 +221,7 @@ def build_training_report(experiment_dir: str | Path) -> dict[str, str]:
             plt.close(fig)
             continue
         ax.set_title(f"Training {title}")
-        ax.set_xlabel("Iteration")
+        ax.set_xlabel("Epoch")
         ax.set_ylabel(title)
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8, ncol=2)
@@ -298,7 +298,7 @@ def build_system_example_window_report(
     experiment_dir: str | Path,
     *,
     split: str = "test",
-    models: Sequence[str] = ("lstm", "deepar", "chronos2"),
+    models: Sequence[str] = ("lstm", "deepar", "chronos2", "seasonal_naive"),
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     system_dir = experiment_dir / "system_eval" / split
@@ -486,7 +486,7 @@ def build_example_window_report(
     experiment_dir: str | Path,
     *,
     split: str = "test",
-    models: Sequence[str] = ("lstm", "deepar", "chronos2"),
+    models: Sequence[str] = ("lstm", "deepar", "chronos2", "seasonal_naive"),
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     forecast_dir = experiment_dir / "forecast_eval" / split

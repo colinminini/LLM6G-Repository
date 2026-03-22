@@ -100,6 +100,20 @@ def cadence_from_timestamps(timestamps: pd.Series | Sequence[object]) -> tuple[p
     return delta, _format_cadence(delta)
 
 
+def daily_seasonal_period(cadence: str) -> int:
+    delta = pd.Timedelta(cadence)
+    if delta <= pd.Timedelta(0):
+        raise ValueError("cadence must be a positive interval.")
+    ratio = pd.Timedelta(days=1) / delta
+    rounded = int(round(float(ratio)))
+    if not np.isclose(float(ratio), float(rounded)):
+        raise ValueError(
+            f"cadence '{cadence}' does not divide 24 hours exactly, so a daily seasonal period "
+            "cannot be represented as an integer number of steps."
+        )
+    return rounded
+
+
 def validate_regular_timestamps(
     values: pd.Series | Sequence[object],
     *,

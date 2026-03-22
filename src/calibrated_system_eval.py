@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forecast-dir", type=Path, required=True)
     parser.add_argument("--tau-calibration-dir", type=Path, required=True)
     parser.add_argument("--raw-system-eval-dir", type=Path, default=None)
-    parser.add_argument("--models", default="lstm,deepar,chronos2")
+    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
     parser.add_argument("--splits", default="test")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--selection-rule", default="best_val_mae_cp")

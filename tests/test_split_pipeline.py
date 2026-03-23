@@ -12,17 +12,20 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.dataset import TrafficWindowDataset
+from src.dataset import DeepARWindowDataset, TFTWindowDataset, TrafficWindowDataset
+from src.deepar_support import build_feature_spec, build_time_feature_matrix
 from src.experiment import (
     build_experiment_manifest,
+    build_canonical_eval_starts_map,
     build_sampled_starts_map,
+    canonical_eval_start_indices,
     cadence_from_timestamps,
     daily_seasonal_period,
     validate_regular_timestamps,
     valid_window_start_indices,
 )
-from src.models import DeepARForecast, LSTMForecast
-from src.pipeline import SeasonalNaiveForecaster, TorchCheckpointForecaster
+from src.models import DeepARForecast, LSTMForecast, TFTForecast
+from src.pipeline import Chronos2ZeroShotForecaster, SeasonalNaiveForecaster, TorchCheckpointForecaster
 
 
 def _write_dataset(
@@ -150,12 +153,159 @@ class SplitPipelineTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertNotEqual(first, third)
 
+    def test_canonical_eval_starts_are_non_overlapping_and_anchored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "toy.csv"
+            _write_dataset(data_path, rows=100, series_count=2)
+            manifest = build_experiment_manifest(
+                data_path=data_path,
+                context_length=8,
+                horizon=4,
+                train_ratio=0.70,
+                val_ratio=0.10,
+                test_ratio=0.20,
+            )
+
+            starts = canonical_eval_start_indices(manifest, "test")
+            self.assertEqual(starts.tolist(), [80, 84, 88, 92, 96])
+
+            starts_map = build_canonical_eval_starts_map(manifest=manifest, split="test")
+            self.assertEqual(starts_map["S0"], [80, 84, 88, 92, 96])
+            self.assertEqual(starts_map["S1"], [80, 84, 88, 92, 96])
+
+    def test_training_window_step_reduces_train_density_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "toy.csv"
+            _write_dataset(data_path, rows=100, series_count=2)
+            manifest = build_experiment_manifest(
+                data_path=data_path,
+                context_length=8,
+                horizon=4,
+                train_ratio=0.70,
+                val_ratio=0.10,
+                test_ratio=0.20,
+            )
+
+            dense_train = TrafficWindowDataset(
+                data_path,
+                split="train",
+                context_length=8,
+                forecast_length=4,
+                manifest=manifest,
+            )
+            stepped_train = TrafficWindowDataset(
+                data_path,
+                split="train",
+                context_length=8,
+                forecast_length=4,
+                manifest=manifest,
+                window_step=4,
+            )
+            dense_val = TrafficWindowDataset(
+                data_path,
+                split="val",
+                context_length=8,
+                forecast_length=4,
+                manifest=manifest,
+            )
+
+            self.assertEqual(dense_train.start_indices[:5], [8, 9, 10, 11, 12])
+            self.assertEqual(stepped_train.start_indices[:5], [8, 12, 16, 20, 24])
+            self.assertLess(len(stepped_train), len(dense_train))
+            self.assertEqual(
+                len(dense_val),
+                manifest.num_series * len(valid_window_start_indices(manifest, "val")),
+            )
+
+    def test_deepar_feature_generation_supports_subdaily_covariates(self) -> None:
+        timestamps = pd.date_range("2024-01-01", periods=24, freq="10min")
+        spec = build_feature_spec(timestamps, cadence="10min", train_end_idx=12)
+        matrix = build_time_feature_matrix(timestamps, cadence="10min", feature_spec=spec)
+
+        self.assertEqual(spec.feature_names, ("age", "time_of_day_step", "day_of_week"))
+        self.assertEqual(matrix.shape, (24, 3))
+        self.assertTrue(np.all(np.isfinite(matrix)))
+        self.assertLess(abs(float(matrix[:12, 0].mean())), 1e-6)
+
+    def test_deepar_dataset_exposes_item_ids_padding_and_sampling_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "toy.csv"
+            timestamps = pd.date_range("2024-01-01", periods=40, freq="15min")
+            pd.DataFrame(
+                {
+                    "timestamp": timestamps.astype(str),
+                    "S0": np.linspace(1.0, 2.0, 40),
+                    "S1": np.linspace(10.0, 20.0, 40),
+                }
+            ).to_csv(data_path, index=False)
+            manifest = build_experiment_manifest(
+                data_path=data_path,
+                context_length=8,
+                horizon=4,
+            )
+            dataset = DeepARWindowDataset(
+                data_path,
+                split="train",
+                context_length=8,
+                forecast_length=4,
+                manifest=manifest,
+            )
+
+            first = dataset[0]
+            self.assertEqual(tuple(first["context"].shape), (8,))
+            self.assertEqual(tuple(first["target"].shape), (4,))
+            self.assertEqual(tuple(first["time_features"].shape), (12, 3))
+            self.assertEqual(tuple(first["observed_mask"].shape), (12,))
+            self.assertEqual(int(first["start_index"]), 0)
+            self.assertEqual(float(first["observed_mask"][:8].sum()), 0.0)
+            self.assertEqual(len(dataset.sampling_weights), len(dataset))
+
+            weight_idx = min(dataset.num_windows - 1, 10)
+            s0_weight = float(dataset.sampling_weights[weight_idx])
+            s1_weight = float(dataset.sampling_weights[dataset.num_windows + weight_idx])
+            self.assertGreater(s1_weight, s0_weight)
+
+    def test_tft_dataset_exposes_static_and_known_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "toy.csv"
+            _write_dataset(data_path, rows=64, series_count=2, freq="10min")
+            manifest = build_experiment_manifest(
+                data_path=data_path,
+                context_length=8,
+                horizon=4,
+            )
+            spec = build_feature_spec(
+                pd.read_csv(data_path)["timestamp"],
+                cadence=manifest.cadence,
+                train_end_idx=manifest.train_split.end_idx,
+            )
+            dataset = TFTWindowDataset(
+                data_path,
+                split="val",
+                context_length=8,
+                forecast_length=4,
+                manifest=manifest,
+                feature_spec=spec,
+            )
+
+            first = dataset[0]
+            self.assertEqual(tuple(first["context"].shape), (8,))
+            self.assertEqual(tuple(first["target"].shape), (4,))
+            self.assertEqual(tuple(first["past_inputs"].shape), (8, 1 + spec.num_features))
+            self.assertEqual(tuple(first["future_inputs"].shape), (4, spec.num_features))
+            self.assertEqual(tuple(first["static_categorical"].shape), (1,))
+
     def test_torch_checkpoint_forecasters_respect_quantile_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             context_length = 8
             horizon = 4
             history = np.linspace(0.0, 1.0, context_length, dtype=float)
+            history_batch = np.stack([history, history + 1.0], axis=0)
 
             lstm = LSTMForecast(
                 context_length=context_length,
@@ -177,6 +327,20 @@ class SplitPipelineTests(unittest.TestCase):
             self.assertEqual(tuple(lstm_pred.y_pred_median.shape), (horizon,))
             self.assertEqual(tuple(lstm_pred.y_pred_95.shape), (horizon,))
             self.assertTrue(np.all(lstm_pred.y_pred_95 >= lstm_pred.y_pred_median))
+            lstm_batch_pred = lstm_forecaster.predict_quantiles_batch(history_batch, horizon)
+            self.assertEqual(tuple(lstm_batch_pred.y_pred_median.shape), (2, horizon))
+            self.assertEqual(tuple(lstm_batch_pred.y_pred_95.shape), (2, horizon))
+            self.assertTrue(np.all(lstm_batch_pred.y_pred_95 >= lstm_batch_pred.y_pred_median))
+            np.testing.assert_allclose(
+                lstm_batch_pred.y_pred_median[0],
+                lstm_pred.y_pred_median,
+                atol=1e-6,
+            )
+            np.testing.assert_allclose(
+                lstm_batch_pred.y_pred_95[0],
+                lstm_pred.y_pred_95,
+                atol=1e-6,
+            )
 
             deepar = DeepARForecast(
                 context_length=context_length,
@@ -197,6 +361,58 @@ class SplitPipelineTests(unittest.TestCase):
             self.assertEqual(tuple(deepar_pred.y_pred_median.shape), (horizon,))
             self.assertEqual(tuple(deepar_pred.y_pred_95.shape), (horizon,))
             self.assertTrue(np.all(deepar_pred.y_pred_95 >= deepar_pred.y_pred_median))
+            deepar_batch_pred = deepar_forecaster.predict_quantiles_batch(history_batch, horizon)
+            self.assertEqual(tuple(deepar_batch_pred.y_pred_median.shape), (2, horizon))
+            self.assertEqual(tuple(deepar_batch_pred.y_pred_95.shape), (2, horizon))
+            self.assertTrue(np.all(deepar_batch_pred.y_pred_95 >= deepar_batch_pred.y_pred_median))
+            np.testing.assert_allclose(
+                deepar_batch_pred.y_pred_median[0],
+                deepar_pred.y_pred_median,
+                atol=1e-6,
+            )
+            np.testing.assert_allclose(
+                deepar_batch_pred.y_pred_95[0],
+                deepar_pred.y_pred_95,
+                atol=1e-6,
+            )
+
+            tft = TFTForecast(
+                context_length=context_length,
+                forecast_length=horizon,
+                hidden_size=8,
+                num_lstm_layers=1,
+                num_heads=2,
+                quantiles=(0.5, 0.95),
+                num_past_features=1,
+                num_future_features=0,
+            )
+            tft_path = tmp_path / "tft.pt"
+            torch.save(tft.state_dict(), tft_path)
+            tft_forecaster = TorchCheckpointForecaster(
+                model_type="tft",
+                checkpoint_path=tft_path,
+                context_length=context_length,
+                forecast_length=horizon,
+                quantiles=(0.5, 0.95),
+            )
+            tft_pred = tft_forecaster.predict_quantiles(history, horizon)
+            self.assertEqual(tuple(tft_pred.y_pred_median.shape), (horizon,))
+            self.assertEqual(tuple(tft_pred.y_pred_95.shape), (horizon,))
+            self.assertTrue(np.all(tft_pred.y_pred_95 >= tft_pred.y_pred_median))
+            tft_batch_pred = tft_forecaster.predict_quantiles_batch(history_batch, horizon)
+            self.assertEqual(tuple(tft_batch_pred.y_pred_median.shape), (2, horizon))
+            self.assertEqual(tuple(tft_batch_pred.y_pred_95.shape), (2, horizon))
+            self.assertTrue(np.all(tft_batch_pred.y_pred_95 >= tft_batch_pred.y_pred_median))
+            np.testing.assert_allclose(
+                tft_batch_pred.y_pred_median[0],
+                tft_pred.y_pred_median,
+                atol=1e-6,
+            )
+            np.testing.assert_allclose(
+                tft_batch_pred.y_pred_95[0],
+                tft_pred.y_pred_95,
+                atol=1e-6,
+            )
 
     def test_seasonal_naive_forecaster_uses_daily_lag_and_fallback(self) -> None:
         forecaster = SeasonalNaiveForecaster(season_length=4)
@@ -204,11 +420,49 @@ class SplitPipelineTests(unittest.TestCase):
         pred = forecaster.predict_quantiles(history, horizon=4)
         np.testing.assert_allclose(pred.y_pred_median, np.asarray([11.0, 12.0, 13.0, 14.0]))
         self.assertTrue(np.all(pred.y_pred_95 >= pred.y_pred_median))
+        batch_pred = forecaster.predict_quantiles_batch(
+            np.stack([history, history + 10.0], axis=0),
+            horizon=4,
+        )
+        self.assertEqual(tuple(batch_pred.y_pred_median.shape), (2, 4))
+        self.assertEqual(tuple(batch_pred.y_pred_95.shape), (2, 4))
+        np.testing.assert_allclose(batch_pred.y_pred_median[0], pred.y_pred_median)
+        self.assertTrue(np.all(batch_pred.y_pred_95 >= batch_pred.y_pred_median))
 
         short_history = np.asarray([5.0, 6.0], dtype=float)
         short_pred = forecaster.predict_quantiles(short_history, horizon=3)
         np.testing.assert_allclose(short_pred.y_pred_median, np.asarray([6.0, 6.0, 6.0]))
         self.assertTrue(np.all(short_pred.y_pred_95 >= short_pred.y_pred_median))
+
+    def test_non_torch_forecasters_ignore_batch_metadata_kwargs(self) -> None:
+        seasonal = SeasonalNaiveForecaster(season_length=4)
+        seasonal_batch = seasonal.predict_quantiles_batch(
+            np.asarray([[1.0, 2.0, 3.0, 4.0]], dtype=float),
+            horizon=2,
+            series_names=["S0"],
+            start_indices=[10],
+        )
+        self.assertEqual(tuple(seasonal_batch.y_pred_median.shape), (1, 2))
+
+        class _FakeChronosPipeline:
+            quantiles = [round(step / 20, 2) for step in range(21)]
+
+            def predict(self, inputs, prediction_length):
+                batch = len(inputs)
+                grid = np.linspace(0.0, 1.0, prediction_length, dtype=float)
+                quantiles = np.stack([grid + 0.1 * idx for idx in range(21)], axis=0)
+                return np.stack([quantiles for _ in range(batch)], axis=0)
+
+        chronos = Chronos2ZeroShotForecaster.__new__(Chronos2ZeroShotForecaster)
+        chronos.pipeline = _FakeChronosPipeline()
+        chronos_batch = chronos.predict_quantiles_batch(
+            np.asarray([[1.0, 2.0, 3.0, 4.0]], dtype=float),
+            horizon=2,
+            series_names=["S0"],
+            start_indices=[10],
+        )
+        self.assertEqual(tuple(chronos_batch.y_pred_median.shape), (1, 2))
+        self.assertTrue(np.all(chronos_batch.y_pred_95 >= chronos_batch.y_pred_median))
 
     @unittest.skipUnless(
         importlib.util.find_spec("ruptures") and importlib.util.find_spec("sklearn"),
@@ -246,9 +500,11 @@ class SplitPipelineTests(unittest.TestCase):
                 str(run_dir),
                 "--models",
                 "lstm",
-                "--max-epochs",
-                "2",
-                "--patience",
+                "--max-iterations",
+                "4",
+                "--patience-iterations",
+                "4",
+                "--validate-every",
                 "2",
                 "--log-every",
                 "2",
@@ -263,7 +519,7 @@ class SplitPipelineTests(unittest.TestCase):
             )
             self.assertTrue((run_dir / "checkpoints" / "lstm_toy_best.pt").exists())
             history = json.loads((run_dir / "training" / "lstm_history.json").read_text())
-            self.assertEqual(history["epoch"], [1, 2])
+            self.assertEqual(history["iteration"], [2, 4])
 
             run_cmd(
                 "src/forecast_eval.py",
@@ -274,14 +530,15 @@ class SplitPipelineTests(unittest.TestCase):
                 "--models",
                 "lstm",
                 "--splits",
-                "train,val,test",
-                "--sampling-mode",
-                "rolling",
+                "val,test",
                 "--max-windows-per-series",
                 "3",
                 "--device",
                 "cpu",
             )
+            training_summary = json.loads((run_dir / "training" / "training_summary.json").read_text())
+            self.assertIn("monitor_metrics", training_summary["models"]["lstm"])
+            self.assertEqual(training_summary["models"]["lstm"]["canonical_metrics"], {})
             self.assertTrue((run_dir / "forecast_eval" / "test" / "lstm_forecast_windows.csv").exists())
 
             run_cmd(
@@ -308,7 +565,11 @@ class SplitPipelineTests(unittest.TestCase):
                 "--models",
                 "lstm",
                 "--split",
-                "val",
+                "train",
+                "--train-window-step",
+                "2",
+                "--cp-detector",
+                "ruptures_pelt",
                 "--cp-penalties",
                 "1",
                 "--cp-min-sizes",
@@ -316,10 +577,11 @@ class SplitPipelineTests(unittest.TestCase):
                 "--cp-jumps",
                 "1",
                 "--output-dir",
-                str(run_dir / "cp_sweep" / "val"),
+                str(run_dir / "cp_sweep" / "train"),
             )
-            sweep_manifest = json.loads((run_dir / "cp_sweep" / "val" / "cp_sweep_manifest.json").read_text())
-            self.assertEqual(sweep_manifest["split"], "val")
+            sweep_manifest = json.loads((run_dir / "cp_sweep" / "train" / "cp_sweep_manifest.json").read_text())
+            self.assertEqual(sweep_manifest["split"], "train")
+            self.assertEqual(sweep_manifest["train_window_step"], 2)
 
             run_cmd(
                 "src/tau_calibration.py",
@@ -336,10 +598,121 @@ class SplitPipelineTests(unittest.TestCase):
                 "--output-dir",
                 str(run_dir / "tau_calibration"),
             )
+            self.assertTrue(
+                (run_dir / "tau_calibration" / "forecast_cache" / "train" / "lstm_forecast_windows.csv").exists()
+            )
             summary_df = pd.read_csv(run_dir / "tau_calibration" / "tau_calibration_summary.csv")
             self.assertEqual(set(summary_df["split"]), {"train", "val", "test"})
             best_df = pd.read_csv(run_dir / "tau_calibration" / "tau_calibration_best_test_rows.csv")
             self.assertTrue(any(str(value).startswith("best_val_") for value in best_df["selected_on"]))
+
+    def test_deepar_training_summary_uses_monitor_metrics_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "toy.csv"
+            run_dir = tmp_path / "run"
+            _write_dataset(data_path, rows=120, series_count=2)
+
+            def run_cmd(*args: str) -> None:
+                subprocess.run([sys.executable, *args], cwd=Path(__file__).resolve().parents[1], check=True)
+
+            run_cmd(
+                "src/prepare_data.py",
+                "--data-path",
+                str(data_path),
+                "--context-length",
+                "8",
+                "--horizon",
+                "4",
+                "--output-dir",
+                str(run_dir),
+            )
+            manifest_path = run_dir / "manifest.json"
+            run_cmd(
+                "src/train.py",
+                "--manifest-path",
+                str(manifest_path),
+                "--output-dir",
+                str(run_dir),
+                "--models",
+                "deepar",
+                "--max-iterations",
+                "2",
+                "--patience-iterations",
+                "2",
+                "--validate-every",
+                "1",
+                "--batch-size",
+                "8",
+                "--hidden-size",
+                "8",
+                "--num-layers",
+                "1",
+                "--device",
+                "cpu",
+            )
+            training_summary = json.loads((run_dir / "training" / "training_summary.json").read_text())
+            self.assertIn("monitor_metrics", training_summary["models"]["deepar"])
+            self.assertEqual(training_summary["models"]["deepar"]["canonical_metrics"], {})
+            self.assertIn(
+                "monitor_val_rmse",
+                training_summary["models"]["deepar"]["monitor_metrics"],
+            )
+
+    def test_tft_training_summary_uses_monitor_metrics_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "toy.csv"
+            run_dir = tmp_path / "run"
+            _write_dataset(data_path, rows=120, series_count=2)
+
+            def run_cmd(*args: str) -> None:
+                subprocess.run([sys.executable, *args], cwd=Path(__file__).resolve().parents[1], check=True)
+
+            run_cmd(
+                "src/prepare_data.py",
+                "--data-path",
+                str(data_path),
+                "--context-length",
+                "8",
+                "--horizon",
+                "4",
+                "--output-dir",
+                str(run_dir),
+            )
+            manifest_path = run_dir / "manifest.json"
+            run_cmd(
+                "src/train.py",
+                "--manifest-path",
+                str(manifest_path),
+                "--output-dir",
+                str(run_dir),
+                "--models",
+                "tft",
+                "--max-iterations",
+                "2",
+                "--patience-iterations",
+                "2",
+                "--validate-every",
+                "1",
+                "--batch-size",
+                "8",
+                "--hidden-size",
+                "8",
+                "--num-layers",
+                "1",
+                "--tft-num-heads",
+                "2",
+                "--device",
+                "cpu",
+            )
+            training_summary = json.loads((run_dir / "training" / "training_summary.json").read_text())
+            self.assertIn("monitor_metrics", training_summary["models"]["tft"])
+            self.assertEqual(training_summary["models"]["tft"]["canonical_metrics"], {})
+            self.assertIn(
+                "monitor_val_rmse",
+                training_summary["models"]["tft"]["monitor_metrics"],
+            )
 
     @unittest.skipUnless(
         importlib.util.find_spec("ruptures") and importlib.util.find_spec("sklearn"),
@@ -377,9 +750,11 @@ class SplitPipelineTests(unittest.TestCase):
                 str(run_dir),
                 "--models",
                 "lstm",
-                "--max-epochs",
-                "2",
-                "--patience",
+                "--max-iterations",
+                "4",
+                "--patience-iterations",
+                "4",
+                "--validate-every",
                 "2",
                 "--log-every",
                 "2",
@@ -402,8 +777,6 @@ class SplitPipelineTests(unittest.TestCase):
                 "lstm",
                 "--splits",
                 "test",
-                "--sampling-mode",
-                "rolling",
                 "--max-windows-per-series",
                 "3",
                 "--device",

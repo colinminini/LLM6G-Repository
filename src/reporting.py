@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 _MPL_CONFIG_DIR = Path(tempfile.gettempdir()) / "llm6g_mplconfig"
 _MPL_CACHE_DIR = Path(tempfile.gettempdir()) / "llm6g_xdg_cache"
@@ -56,9 +56,11 @@ def _preferred_model_order(
     models: Sequence[str],
     *,
     preferred_model: str = PREFERRED_EXAMPLE_MODEL,
+    include_preferred_model: bool = True,
 ) -> list[str]:
     ordered: list[str] = []
-    for model_name in (preferred_model, *models):
+    seed_models = (preferred_model, *models) if include_preferred_model else tuple(models)
+    for model_name in seed_models:
         normalized = str(model_name)
         if normalized not in ordered:
             ordered.append(normalized)
@@ -76,7 +78,7 @@ def _select_example_window_row(
     window_dir: str | Path,
     *,
     window_suffix: str,
-    models: Sequence[str] = ("lstm", "deepar", "chronos2", "seasonal_naive"),
+    models: Sequence[str] = ("lstm", "deepar", "tft", "chronos2", "seasonal_naive"),
     preferred_model: str = PREFERRED_EXAMPLE_MODEL,
 ) -> tuple[str, pd.Series] | None:
     window_dir = Path(window_dir)
@@ -98,6 +100,124 @@ def _select_example_window_row(
         if not df.empty:
             return model_name, df.iloc[0]
     return None
+
+
+def _collect_example_window_rows(
+    window_dir: str | Path,
+    *,
+    window_suffix: str,
+    models: Sequence[str] = ("lstm", "deepar", "tft", "chronos2", "seasonal_naive"),
+    preferred_model: str = PREFERRED_EXAMPLE_MODEL,
+) -> list[tuple[str, pd.Series]]:
+    window_dir = Path(window_dir)
+    selected_rows: list[tuple[str, pd.Series]] = []
+    seen_models: set[str] = set()
+    for model_name in _preferred_model_order(models, preferred_model=preferred_model):
+        seen_models.add(model_name)
+        path = window_dir / f"{model_name}_{window_suffix}.csv"
+        if not path.exists():
+            continue
+        df = pd.read_csv(path)
+        if not df.empty:
+            selected_rows.append((model_name, df.iloc[0]))
+
+    for path in sorted(window_dir.glob(f"*_{window_suffix}.csv")):
+        model_name = path.name[: -len(f"_{window_suffix}.csv")]
+        if model_name in seen_models:
+            continue
+        df = pd.read_csv(path)
+        if not df.empty:
+            selected_rows.append((model_name, df.iloc[0]))
+    return selected_rows
+
+
+def _normalize_window_selector(raw_selector: Mapping[str, Any] | None) -> dict[str, Any]:
+    if raw_selector is None:
+        return {}
+    selector: dict[str, Any] = {}
+    if "series" in raw_selector and raw_selector["series"] not in (None, ""):
+        selector["series"] = str(raw_selector["series"])
+    if "start_index" in raw_selector and raw_selector["start_index"] not in (None, ""):
+        selector["start_index"] = int(raw_selector["start_index"])
+    if "row_index" in raw_selector and raw_selector["row_index"] not in (None, ""):
+        selector["row_index"] = int(raw_selector["row_index"])
+    return selector
+
+
+def _select_window_row_with_selector(
+    df: pd.DataFrame,
+    *,
+    selector: Mapping[str, Any] | None = None,
+) -> pd.Series | None:
+    if df.empty:
+        return None
+    normalized_selector = _normalize_window_selector(selector)
+    selected_df = df
+    if "series" in normalized_selector:
+        selected_df = selected_df[selected_df["series"].astype(str) == normalized_selector["series"]]
+    if "start_index" in normalized_selector:
+        selected_df = selected_df[selected_df["start_index"].astype(int) == normalized_selector["start_index"]]
+    if selected_df.empty:
+        return None
+
+    row_index = int(normalized_selector.get("row_index", 0))
+    if row_index < 0:
+        row_index = len(selected_df) + row_index
+    if row_index < 0 or row_index >= len(selected_df):
+        return None
+    return selected_df.iloc[row_index]
+
+
+def _collect_selected_window_rows(
+    window_dir: str | Path,
+    *,
+    window_suffix: str,
+    models: Sequence[str] = ("lstm", "deepar", "tft", "chronos2", "seasonal_naive"),
+    preferred_model: str = PREFERRED_EXAMPLE_MODEL,
+    shared_selector: Mapping[str, Any] | None = None,
+    model_selectors: Mapping[str, Mapping[str, Any]] | None = None,
+    strict: bool = False,
+    include_extra_models: bool = True,
+    include_preferred_model: bool = True,
+) -> list[tuple[str, pd.Series]]:
+    window_dir = Path(window_dir)
+    selected_rows: list[tuple[str, pd.Series]] = []
+    seen_models: set[str] = set()
+    normalized_shared_selector = _normalize_window_selector(shared_selector)
+    model_selectors = model_selectors or {}
+
+    def select_from_path(model_name: str, path: Path) -> None:
+        selector = dict(normalized_shared_selector)
+        selector.update(_normalize_window_selector(model_selectors.get(model_name)))
+        df = pd.read_csv(path)
+        if df.empty:
+            return
+        row = _select_window_row_with_selector(df, selector=selector)
+        if row is None:
+            if strict:
+                raise ValueError(
+                    f"No window matched selector {selector} for model '{model_name}' in '{path}'."
+                )
+            return
+        selected_rows.append((model_name, row))
+
+    for model_name in _preferred_model_order(
+        models,
+        preferred_model=preferred_model,
+        include_preferred_model=include_preferred_model,
+    ):
+        seen_models.add(model_name)
+        path = window_dir / f"{model_name}_{window_suffix}.csv"
+        if path.exists():
+            select_from_path(model_name, path)
+
+    if include_extra_models:
+        for path in sorted(window_dir.glob(f"*_{window_suffix}.csv")):
+            model_name = path.name[: -len(f"_{window_suffix}.csv")]
+            if model_name in seen_models:
+                continue
+            select_from_path(model_name, path)
+    return selected_rows
 
 
 def _parse_json_series(value: Any) -> np.ndarray:
@@ -298,55 +418,93 @@ def build_system_example_window_report(
     experiment_dir: str | Path,
     *,
     split: str = "test",
-    models: Sequence[str] = ("lstm", "deepar", "chronos2", "seasonal_naive"),
+    models: Sequence[str] = ("lstm", "deepar", "tft", "chronos2", "seasonal_naive"),
+    shared_selector: Mapping[str, Any] | None = None,
+    model_selectors: Mapping[str, Mapping[str, Any]] | None = None,
+    strict: bool = False,
+    include_extra_models: bool = True,
+    include_preferred_model: bool = True,
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     system_dir = experiment_dir / "system_eval" / split
-    selected = _select_example_window_row(
+    selected_rows = _collect_selected_window_rows(
         system_dir,
         window_suffix="system_windows",
         models=models,
+        shared_selector=shared_selector,
+        model_selectors=model_selectors,
+        strict=strict,
+        include_extra_models=include_extra_models,
+        include_preferred_model=include_preferred_model,
     )
-    if selected is None:
+    if not selected_rows:
         return {}
 
-    model_name, row = selected
-    history = _parse_json_series(row["history"])
-    future_true = _parse_json_series(row["future_true"])
-    y50 = _parse_json_series(row["y_pred_median"])
-    y95 = _parse_json_series(row["y_pred_95"])
-    tau_pred = int(row["tau_pred"])
-    tau_true = int(row["tau_true"])
-    safe_ceiling = float(row["safe_ceiling"])
+    outputs: dict[str, str] = {}
+    for model_name, row in selected_rows:
+        history = _parse_json_series(row["history"])
+        future_true = _parse_json_series(row["future_true"])
+        y50 = _parse_json_series(row["y_pred_median"])
+        y95 = _parse_json_series(row["y_pred_95"])
+        tau_pred = row.get("tau_pred")
+        tau_ref = row.get("tau_ref", row.get("tau_true"))
+        has_break_pred = bool(int(row.get("has_break_pred", 1))) if not pd.isna(row.get("has_break_pred", 1)) else False
+        has_break_ref = bool(int(row.get("has_break_ref", 1))) if not pd.isna(row.get("has_break_ref", 1)) else False
+        safe_ceiling = float(row["safe_ceiling"])
 
-    fig, ax = plt.subplots(figsize=(11, 4.2))
-    x_hist = np.arange(history.size)
-    x_future = np.arange(history.size, history.size + future_true.size)
-    ax.plot(x_hist, history, label="history", color="#444444")
-    ax.plot(x_future, future_true, label="future_true", color="#000000")
-    ax.plot(x_future, y50, label="q50", color="#1f77b4")
-    ax.plot(x_future, y95, label="q95", color="#ff7f0e")
-    ax.hlines(
-        safe_ceiling,
-        xmin=x_future[0],
-        xmax=x_future[-1],
-        color="#2ca02c",
-        linestyle="--",
-        linewidth=1.5,
-        label="safe_ceiling",
-    )
-    ax.axvline(history.size + tau_pred, color="#d62728", linestyle="--", linewidth=1.2, label="tau_pred")
-    ax.axvline(history.size + tau_true, color="#9467bd", linestyle=":", linewidth=1.2, label="tau_true")
-    ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
-    ax.grid(alpha=0.3)
-    ax.legend(fontsize=8, ncol=3)
+        fig, ax = plt.subplots(figsize=(11, 4.2))
+        x_hist = np.arange(history.size)
+        x_future = np.arange(history.size, history.size + future_true.size)
+        ax.plot(x_hist, history, label="history", color="#444444")
+        ax.plot(x_future, future_true, label="future_true", color="#000000")
+        ax.plot(x_future, y50, label="q50", color="#1f77b4")
+        ax.plot(x_future, y95, label="q95", color="#ff7f0e")
+        ax.hlines(
+            safe_ceiling,
+            xmin=x_future[0],
+            xmax=x_future[-1],
+            color="#2ca02c",
+            linestyle="--",
+            linewidth=1.5,
+            label="safe_ceiling",
+        )
+        if has_break_pred and not pd.isna(tau_pred):
+            ax.axvline(
+                history.size + int(tau_pred),
+                color="#d62728",
+                linestyle="--",
+                linewidth=1.2,
+                label="tau_pred",
+            )
+        else:
+            ax.text(0.02, 0.95, "pred: no break", transform=ax.transAxes, color="#d62728")
+        if has_break_ref and tau_ref is not None and not pd.isna(tau_ref):
+            ax.axvline(
+                history.size + int(tau_ref),
+                color="#9467bd",
+                linestyle=":",
+                linewidth=1.2,
+                label="tau_ref",
+            )
+        else:
+            ax.text(0.02, 0.88, "ref: no break", transform=ax.transAxes, color="#9467bd")
+        ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8, ncol=3)
 
-    plot_path = experiment_dir / "reports" / f"example_windows_system_eval_{split}.png"
-    _save_figure(fig, plot_path)
-    return {f"example_windows_system_eval_{split}_plot": str(plot_path)}
+        model_plot_path = experiment_dir / "reports" / f"example_windows_system_eval_{model_name}_{split}.png"
+        _save_figure(fig, model_plot_path)
+        outputs[f"example_windows_system_eval_{model_name}_{split}_plot"] = str(model_plot_path)
+
+    preferred_model_name, _ = selected_rows[0]
+    preferred_plot_path = experiment_dir / "reports" / f"example_windows_system_eval_{preferred_model_name}_{split}.png"
+    legacy_plot_path = experiment_dir / "reports" / f"example_windows_system_eval_{split}.png"
+    shutil.copy2(preferred_plot_path, legacy_plot_path)
+    outputs[f"example_windows_system_eval_{split}_plot"] = str(legacy_plot_path)
+    return outputs
 
 
-def build_cp_sweep_report(experiment_dir: str | Path, split: str = "val") -> dict[str, str]:
+def build_cp_sweep_report(experiment_dir: str | Path, split: str = "train") -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     summary_path = experiment_dir / "cp_sweep" / split / "cp_sweep_summary.csv"
     if not summary_path.exists():
@@ -359,37 +517,21 @@ def build_cp_sweep_report(experiment_dir: str | Path, split: str = "val") -> dic
     fig, axes = plt.subplots(1, len(models), figsize=(5 * len(models), 4), squeeze=False)
     for ax, model_name in zip(axes[0], models):
         subset = df[df["model"] == model_name].copy()
-        pivot = subset.pivot_table(
-            index="cp_min_size",
-            columns="cp_penalty",
-            values="MAE_CP",
-            aggfunc="mean",
-        ).sort_index().sort_index(axis=1)
-        image = ax.imshow(pivot.to_numpy(dtype=float), aspect="auto", cmap="viridis")
-        ax.set_title(f"CP Sweep MAE ({model_name})")
-        ax.set_xlabel("cp_penalty")
-        ax.set_ylabel("cp_min_size")
-        ax.set_xticks(range(len(pivot.columns)))
-        ax.set_xticklabels([str(v) for v in pivot.columns])
-        ax.set_yticks(range(len(pivot.index)))
-        ax.set_yticklabels([str(v) for v in pivot.index])
-        values = pivot.to_numpy(dtype=float)
-        for row_idx in range(values.shape[0]):
-            for col_idx in range(values.shape[1]):
-                value = values[row_idx, col_idx]
-                if np.isnan(value):
-                    continue
-                text_color = "white" if value >= np.nanmedian(values) else "black"
-                ax.text(
-                    col_idx,
-                    row_idx,
-                    f"{value:.2f}",
-                    ha="center",
-                    va="center",
-                    fontsize=8,
-                    color=text_color,
-                )
-        fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+        sort_cols = ["break_f1", "tau_mae_when_both_break", "coverage_gap", "sharpness"]
+        available = [col for col in sort_cols if col in subset.columns]
+        ascending = [False, True, True, True][: len(available)]
+        subset = subset.sort_values(by=available, ascending=ascending, kind="stable").head(8)
+        labels = [
+            f"{row.cp_detector}\nmin={int(row.cp_min_size)}"
+            for row in subset.itertuples(index=False)
+        ]
+        values = subset["break_f1"] if "break_f1" in subset.columns else subset["MAE_CP"]
+        ax.bar(range(len(subset)), values, color="#2ca02c")
+        ax.set_title(f"CP Sweep ({model_name})")
+        ax.set_ylabel("Break F1" if "break_f1" in subset.columns else "MAE_CP")
+        ax.set_xticks(range(len(subset)))
+        ax.set_xticklabels(labels, rotation=20, ha="right")
+        ax.grid(axis="y", alpha=0.3)
     plot_path = experiment_dir / "reports" / f"cp_sweep_{split}.png"
     _save_figure(fig, plot_path)
     return {f"cp_sweep_{split}_plot": str(plot_path)}
@@ -486,37 +628,55 @@ def build_example_window_report(
     experiment_dir: str | Path,
     *,
     split: str = "test",
-    models: Sequence[str] = ("lstm", "deepar", "chronos2", "seasonal_naive"),
+    models: Sequence[str] = ("lstm", "deepar", "tft", "chronos2", "seasonal_naive"),
+    shared_selector: Mapping[str, Any] | None = None,
+    model_selectors: Mapping[str, Mapping[str, Any]] | None = None,
+    strict: bool = False,
+    include_extra_models: bool = True,
+    include_preferred_model: bool = True,
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     forecast_dir = experiment_dir / "forecast_eval" / split
-    selected = _select_example_window_row(
+    selected_rows = _collect_selected_window_rows(
         forecast_dir,
         window_suffix="forecast_windows",
         models=models,
+        shared_selector=shared_selector,
+        model_selectors=model_selectors,
+        strict=strict,
+        include_extra_models=include_extra_models,
+        include_preferred_model=include_preferred_model,
     )
-    if selected is None:
+    if not selected_rows:
         return {}
 
-    model_name, row = selected
-    history = _parse_json_series(row["history"])
-    future_true = _parse_json_series(row["future_true"])
-    y50 = _parse_json_series(row["y_pred_median"])
-    y95 = _parse_json_series(row["y_pred_95"])
+    outputs: dict[str, str] = {}
+    for model_name, row in selected_rows:
+        history = _parse_json_series(row["history"])
+        future_true = _parse_json_series(row["future_true"])
+        y50 = _parse_json_series(row["y_pred_median"])
+        y95 = _parse_json_series(row["y_pred_95"])
 
-    fig, ax = plt.subplots(figsize=(10, 3.8))
-    x_hist = np.arange(history.size)
-    x_future = np.arange(history.size, history.size + future_true.size)
-    ax.plot(x_hist, history, label="history", color="#444444")
-    ax.plot(x_future, future_true, label="future_true", color="#000000")
-    ax.plot(x_future, y50, label="q50", color="#1f77b4")
-    ax.plot(x_future, y95, label="q95", color="#ff7f0e")
-    ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
-    ax.grid(alpha=0.3)
-    ax.legend(fontsize=8)
-    plot_path = experiment_dir / "reports" / f"example_windows_{split}.png"
-    _save_figure(fig, plot_path)
-    return {f"example_windows_{split}_plot": str(plot_path)}
+        fig, ax = plt.subplots(figsize=(10, 3.8))
+        x_hist = np.arange(history.size)
+        x_future = np.arange(history.size, history.size + future_true.size)
+        ax.plot(x_hist, history, label="history", color="#444444")
+        ax.plot(x_future, future_true, label="future_true", color="#000000")
+        ax.plot(x_future, y50, label="q50", color="#1f77b4")
+        ax.plot(x_future, y95, label="q95", color="#ff7f0e")
+        ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8)
+        model_plot_path = experiment_dir / "reports" / f"example_windows_{model_name}_{split}.png"
+        _save_figure(fig, model_plot_path)
+        outputs[f"example_windows_{model_name}_{split}_plot"] = str(model_plot_path)
+
+    preferred_model_name, _ = selected_rows[0]
+    preferred_plot_path = experiment_dir / "reports" / f"example_windows_{preferred_model_name}_{split}.png"
+    legacy_plot_path = experiment_dir / "reports" / f"example_windows_{split}.png"
+    shutil.copy2(preferred_plot_path, legacy_plot_path)
+    outputs[f"example_windows_{split}_plot"] = str(legacy_plot_path)
+    return outputs
 
 
 def build_report_metadata(experiment_dir: str | Path) -> dict[str, str]:

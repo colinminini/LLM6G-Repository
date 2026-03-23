@@ -363,7 +363,7 @@ def parse_args() -> argparse.Namespace:
             "Rolling-window backtest for probabilistic forecast + change-point + safe-ceiling evaluation."
         )
     )
-    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
     parser.add_argument("--timestamp-col", default="timestamp")
     parser.add_argument(
         "--data-path",

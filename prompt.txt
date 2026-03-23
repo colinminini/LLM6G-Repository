@@ -5,3 +5,236 @@ It is now time to rework the readme. Create a copy of the readme.md and name it 
 These are just some small ideas of mine, but let's work on the full story together what do you have in mind? WE should optimize for paper publication on https://www.ieee-fine.org/2026/.
 
 We'll first re-write a clean readme for codebase publication, then write the full Latex paper in paper/.
+
+
+
+---
+
+The first 4 stages have been completed. It just lacks CP sweep and tau calibration now, they are running. I updated the readme, the results are VASTLY different from what we've written in the paper previously. Espacially the exmaple plots are very explicit about failures of training deep learning models on this dataset. Take a look deep at the readme. You can also take a deep look at the system eval results. My opinion is that the sharpness is the single most important eval metric for our pipeline because it is direclty related to our main goal: optimization of resources. Take a deep look at the plots from results/144/48/reports I created more plots for more interpretability, especially for example windows. We can use these plots in our paper to illustrated our ideas.
+
+First take deep time to look at all this and my readme interpretation because it is a pivotal moment for our paper. These results are vastly different from our previous experiment. I am thinking we might re-focus our story for these resuts.
+
+Second think deeply about the impact the new results will have on our paper. Is the paper still relevant with these new results. In my opinion it might be because as I said, if sharpness is the most important metric, chronos2 is then the best forecasting model for our pipeline. But a naive seasonal is still very strong, and on some plot it looks like very strong. But I want to know your opinion. Is our work still paper level?
+
+Then if the answer is yes, we need to elaborate a detailed plan to restructure completely our paper (the latex is in /paper) to the new story, to the new direction.
+
+---
+Breaking point:
+Look at the changing point plots from the example windows system eval in results/exp/144-48. Do you think that the changing point algorithm is working right? I feel like it is always predicting a point but that point doesn't feel like a change of distribution to my eyes. What is the algorithm we use for breaking point? Is it using fully the setting that we offern, namely the ability to do offline breaking point finding. I mean is it finding the breaking point on the go, or with the full window in mind? I'd like to improve this breaking point module to make it feel more right. Maybe changing the algo? What do you think? My intuition would be that an algorithm that can first look at the complete window and then decide if on that window there really is a change of distribution at some point, would leverage more our system perks. What do you think? Do you know any open-source algorithm that would fit our pipeline better?
+Take a deep look at how this paper: references/Station Transformers. How do they deal with non-stationarity. Give me an explanation. Would it be relevant to our pipeline, in any way would it improve our pipeline compared to our current breaking point algorithm?
+---
+
+
+To send:
+
+- CP Sweep:
+take a look at the run_experiment.py. It is the main script of my codebase.
+Take a look at the notebook log to flag any issue in our full pipeline. Take a deep look at every step to flag every potential issue. I have flagged ounce already: CP Sweep is taking 12h to complete. Let's work on a way to fix this problem.
+FIrst explain to me how the CP sweep is currently working, what does it do? Based from what data?
+Then read carefully the notebook log:
+Look at the notebook log:
+================================================================================
+Stage 1/7: prepare_data
+Output dir: results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42
+================================================================================
+Saved manifest: results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/manifest.json
+Saved split summary: results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/split_summary.csv
+Completed prepare_data in 0.5s
+Headline metrics: {"dataset_path": "data/data_tim_milan_10min_trainable_200.csv", "cadence": "10min", "context_length": 144, "horizon": 48, "num_rows": 8928, "num_series": 200}
+Published README plots: /Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/published_report_index.json
+
+================================================================================
+Stage 2/7: train
+Output dir: results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42
+================================================================================
+[train:deepar] starting max_iterations=171 validate_every=171 patience_iterations=2561
+[deepar_data_tim_milan_10min_trainable_200] iter 171/171 - train_loss=3.057 - train_rmse=17.914 - monitor_val_loss=2.037 - val_rmse=5.360 - patience_iters=0/2561
+[deepar_data_tim_milan_10min_trainable_200] wall_time=00:06 completed_iterations=171/171
+train:deepar_data_tim_milan_10min_trainable_200: 100%|█| 171/171 [00:06<00:00, 2
+Final metrics
+                     metric   value
+0                train_loss   3.057
+1                train_rmse  17.914
+2          monitor_val_loss   2.037
+3          monitor_val_rmse   5.360
+4                train_q0.5   3.954
+5               train_q0.95   1.118
+6            train_coverage   0.956
+7         coverage_quantile   0.950
+8      train_interval_width  16.890
+9              val_rmse_q50   5.360
+10          val_pinball_q50   1.034
+11          val_pinball_q95   0.303
+12         val_coverage_q95   0.972
+13  val_interval_width_mean   5.048
+14                 best_val   2.037
+15           last_iteration     171
+16      patience_iterations  0/2561
+17                  monitor    loss
+[train:tft] starting max_iterations=167 validate_every=167 patience_iterations=2501
+[tft_data_tim_milan_10min_trainable_200] iter 167/167 - train_loss=4.667 - train_rmse=20.473 - monitor_val_loss=2.822 - val_rmse=16.054 - patience_iters=0/2501
+[tft_data_tim_milan_10min_trainable_200] wall_time=01:53 completed_iterations=167/167
+train:tft_data_tim_milan_10min_trainable_200: 100%|█| 167/167 [01:53<00:00,  1.4
+Final metrics
+                     metric   value
+0                train_loss   4.667
+1                train_rmse  20.473
+2          monitor_val_loss   2.822
+3          monitor_val_rmse  16.054
+4                train_q0.5   4.057
+5               train_q0.95   5.276
+6            train_coverage   0.643
+7         coverage_quantile   0.950
+8      train_interval_width   4.989
+9              val_rmse_q50  16.054
+10          val_pinball_q50   2.684
+11          val_pinball_q95   2.960
+12         val_coverage_q95   0.886
+13  val_interval_width_mean   5.485
+14                 best_val   2.822
+15           last_iteration     167
+16      patience_iterations  0/2501
+17                  monitor    loss
+[train:lstm] starting max_iterations=167 validate_every=167 patience_iterations=2501
+[lstm_data_tim_milan_10min_trainable_200] iter 167/167 - train_loss=1.803 - train_rmse=10.080 - monitor_val_loss=1.106 - val_rmse=6.939 - patience_iters=0/2501
+[lstm_data_tim_milan_10min_trainable_200] wall_time=00:29 completed_iterations=167/167
+train:lstm_data_tim_milan_10min_trainable_200: 100%|█| 167/167 [00:29<00:00,  5.
+Final metrics
+                     metric   value
+0                train_loss   1.803
+1                train_rmse  10.080
+2          monitor_val_loss   1.106
+3          monitor_val_rmse   6.939
+4                train_q0.5   2.352
+5               train_q0.95   1.254
+6            train_coverage   0.910
+7         coverage_quantile   0.950
+8      train_interval_width   9.607
+9              val_rmse_q50   6.939
+10          val_pinball_q50   1.715
+11          val_pinball_q95   0.496
+12         val_coverage_q95   0.976
+13  val_interval_width_mean   8.638
+14                 best_val   1.106
+15           last_iteration     167
+16      patience_iterations  0/2501
+17                  monitor    loss
+Saved training summary: results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/training/training_summary.json
+Completed train in 152.0s
+Headline metrics: {"deepar": {"monitor_val_loss": 2.0373564697148505, "monitor_val_rmse": 5.36013475212066, "val_pinball_q50": 1.0340395150361237}, "tft": {"monitor_val_loss": 2.821837033867926, "monitor_val_rmse": 16.054224144252252, "val_pinball_q50": 2.684003517152382}, "lstm": {"monitor_val_loss": 1.1055713421164952, "monitor_val_rmse": 6.938748002985488, "val_pinball_q50": 1.715316125728466}}
+Published README plots: /Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/published_report_index.json
+
+================================================================================
+Stage 3/7: forecast_eval
+Output dir: results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42
+================================================================================
+[forecast_eval:val:deepar] starting windows=3600                                
+[forecast_eval:val:deepar] rmse_q50=20.7584 coverage_q95=0.3408                 
+[forecast_eval:val:deepar] wall_time=01:15 completed=3600/3600                  
+forecast_eval:val:deepar: 100%|█| 3600/3600 [01:14<00:00, 48.26window/s, phase=d
+[forecast_eval:val:tft] starting windows=3600                                   
+[forecast_eval:val:tft] rmse_q50=16.0405 coverage_q95=0.8856                    
+[forecast_eval:val:tft] wall_time=00:03 completed=3600/3600                     
+forecast_eval:val:tft: 100%|█| 3600/3600 [00:02<00:00, 1237.18window/s, phase=do
+[forecast_eval:val:lstm] starting windows=3600                                  
+[forecast_eval:val:lstm] rmse_q50=8.5158 coverage_q95=0.8825                    
+[forecast_eval:val:lstm] wall_time=00:02 completed=3600/3600                    
+forecast_eval:val:lstm: 100%|█| 3600/3600 [00:01<00:00, 2149.18window/s, phase=d
+[forecast_eval:val:chronos2] starting windows=3600                              
+[forecast_eval:val:chronos2] rmse_q50=7.2291 coverage_q95=0.9493                
+[forecast_eval:val:chronos2] wall_time=00:08 completed=3600/3600                
+forecast_eval:val:chronos2: 100%|█| 3600/3600 [00:08<00:00, 427.62window/s, phas
+[forecast_eval:val:seasonal_naive] starting windows=3600                        
+[forecast_eval:val:seasonal_naive] rmse_q50=7.5872 coverage_q95=0.8545          
+[forecast_eval:val:seasonal_naive] wall_time=00:00 completed=3600/3600          
+forecast_eval:val:seasonal_naive: 100%|█| 3600/3600 [00:00<00:00, 8900.41window/
+[forecast_eval:test:deepar] starting windows=7400                               
+[forecast_eval:test:deepar] rmse_q50=18.9663 coverage_q95=0.3577                
+[forecast_eval:test:deepar] wall_time=02:02 completed=7400/7400                 
+forecast_eval:test:deepar: 100%|█| 7400/7400 [02:01<00:00, 60.88window/s, phase=
+[forecast_eval:test:tft] starting windows=7400                                  
+[forecast_eval:test:tft] rmse_q50=14.4231 coverage_q95=0.9139                   
+[forecast_eval:test:tft] wall_time=00:05 completed=7400/7400                    
+forecast_eval:test:tft: 100%|█| 7400/7400 [00:04<00:00, 1504.93window/s, phase=d
+[forecast_eval:test:lstm] starting windows=7400                                 
+[forecast_eval:test:lstm] rmse_q50=7.4522 coverage_q95=0.8951                   
+[forecast_eval:test:lstm] wall_time=00:02 completed=7400/7400                   
+forecast_eval:test:lstm: 100%|█| 7400/7400 [00:02<00:00, 3155.96window/s, phase=
+[forecast_eval:test:chronos2] starting windows=7400                             
+[forecast_eval:test:chronos2] rmse_q50=7.0705 coverage_q95=0.8139               
+[forecast_eval:test:chronos2] wall_time=00:17 completed=7400/7400               
+forecast_eval:test:chronos2: 100%|█| 7400/7400 [00:16<00:00, 435.69window/s, pha
+[forecast_eval:test:seasonal_naive] starting windows=7400                       
+[forecast_eval:test:seasonal_naive] rmse_q50=7.2630 coverage_q95=0.8578         
+[forecast_eval:test:seasonal_naive] wall_time=00:01 completed=7400/7400         
+forecast_eval:test:seasonal_naive: 100%|█| 7400/7400 [00:00<00:00, 9095.08window
+Saved forecast summary: results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/forecast_eval/forecast_eval_summary.json
+Completed forecast_eval in 246.6s
+Headline metrics: {"val": {"chronos2": {"model": "chronos2", "split": "val", "dataset_path": "data/data_tim_milan_10min_trainable_200.csv", "context_length": 144, "horizon": 48, "quantiles": [0.5, 0.95], "device": "mps", "num_windows_total": 3600, "rmse_q50": 7.229148198507896, "pinball_q50": 1.6875696475898914, "pinball_q95": 0.5216018810718751, "coverage_q95": 0.9493229166666667, "interval_width_mean": 8.097793259322643, "window_policy": {"type": "non_overlapping", "anchor": "split_start", "window_step": 48, "max_windows_per_series": null}}, "deepar": {"model": "deepar", "split": "val", "dataset_path": "data/
+Published README plots: /Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/published_report_index.json
+
+================================================================================
+Stage 4/7: cp_sweep
+Output dir: results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42
+================================================================================
+[cp_sweep:forecast_cache:train:deepar] starting windows=202000                  
+[cp_sweep:forecast_cache:train:deepar] rmse_q50=22.4845 coverage_q95=0.3501     
+[cp_sweep:forecast_cache:train:deepar] wall_time=49:44 completed=202000/202000  
+cp_sweep:forecast_cache:train:deepar: 100%|█| 202000/202000 [49:43<00:00, 67.70w
+[cp_sweep:forecast_cache:train:tft] starting windows=202000                     
+[cp_sweep:forecast_cache:train:tft] rmse_q50=17.9069 coverage_q95=0.8726        
+[cp_sweep:forecast_cache:train:tft] wall_time=02:35 completed=202000/202000     
+cp_sweep:forecast_cache:train:tft: 100%|█| 202000/202000 [02:34<00:00, 1305.49wi
+[cp_sweep:forecast_cache:train:lstm] starting windows=202000                    
+[cp_sweep:forecast_cache:train:lstm] rmse_q50=9.5799 coverage_q95=0.8708        
+[cp_sweep:forecast_cache:train:lstm] wall_time=00:42 completed=202000/202000    
+cp_sweep:forecast_cache:train:lstm: 100%|█| 202000/202000 [00:41<00:00, 4830.92w
+[cp_sweep:forecast_cache:train:chronos2] starting windows=202000                
+[cp_sweep:forecast_cache:train:chronos2] rmse_q50=9.1333 coverage_q95=0.8955    
+[cp_sweep:forecast_cache:train:chronos2] wall_time=07:05 completed=202000/202000
+cp_sweep:forecast_cache:train:chronos2: 100%|█| 202000/202000 [07:04<00:00, 475.
+[cp_sweep:forecast_cache:train:seasonal_naive] starting windows=202000          
+[cp_sweep:forecast_cache:train:seasonal_naive] rmse_q50=8.8669 coverage_q95=0.8904
+[cp_sweep:forecast_cache:train:seasonal_naive] wall_time=00:22 completed=202000/202000
+cp_sweep:forecast_cache:train:seasonal_naive: 100%|█| 202000/202000 [00:21<00:00
+[cp_sweep] starting models=5 configs_per_model=72 split=train                   
+[cp_sweep:deepar] cached_train_windows=202000 configs=72                        
+cp_sweep:   2%| | 6/360 [12:55<12:37:05, 128.32s/config, phase=sweep, elapsed=10^C
+Traceback (most recent call last):
+  File "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/src/cp_sweep.py", line 527, in <module>
+Traceback (most recent call last):
+  File [35m"/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py"[0m, line [35m1280[0m, in [35mwait[0m
+    return [31mself._wait[0m[1;31m(timeout=timeout)[0m
+           [31m~~~~~~~~~~[0m[1;31m^^^^^^^^^^^^^^^^^[0m
+  File [35m"/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py"[0m, line [35m2066[0m, in [35m_wait[0m
+    (pid, sts) = [31mself._try_wait[0m[1;31m(0)[0m
+                 [31m~~~~~~~~~~~~~~[0m[1;31m^^^[0m
+  File [35m"/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py"[0m, line [35m2024[0m, in [35m_try_wait[0m
+    (pid, sts) = [31mos.waitpid[0m[1;31m(self.pid, wait_flags)[0m
+                 [31m~~~~~~~~~~[0m[1;31m^^^^^^^^^^^^^^^^^^^^^^[0m
+[1;35mKeyboardInterrupt[0m
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File [35m"/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/src/run_experiment.py"[0m, line [35m610[0m, in [35m<module>[0m
+    [31mmain[0m[1;31m()[0m
+    [31m~~~~[0m[1;31m^^[0m
+  File [35m"/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/src/run_experiment.py"[0m, line [35m569[0m, in [35mmain[0m
+    [31msubprocess.run[0m[1;31m(command, cwd=Path(__file__).resolve().parents[1], check=True)[0m
+    [31m~~~~~~~~~~~~~~[0m[1;31m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  File [35m"/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py"[0m, line [35m556[0m, in [35mrun[0m
+    stdout, stderr = [31mprocess.communicate[0m[1;31m(input, timeout=timeout)[0m
+                     [31m~~~~~~~~~~~~~~~~~~~[0m[1;31m^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  File [35m"/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py"[0m, line [35m1214[0m, in [35mcommunicate[0m
+    [31mself.wait[0m[1;31m()[0m
+    [31m~~~~~~~~~[0m[1;31m^^[0m
+  File [35m"/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py"[0m, line [35m1293[0m, in [35mwait[0m
+    [31mself._wait[0m[1;31m(timeout=sigint_timeout)[0m
+    [31m~~~~~~~~~~[0m[1;31m^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  File [35m"/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py"[0m, line [35m2060[0m, in [35m_wait[0m
+    [31mtime.sleep[0m[1;31m(delay)[0m
+    [31m~~~~~~~~~~[0m[1;31m^^^^^^^[0m
+[1;35mKeyboardInterrupt[0m
+/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/multiprocessing/resource_tracker.py:324: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-6t0m1mur'}
+  warnings.warn(

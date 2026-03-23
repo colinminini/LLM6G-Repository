@@ -1,6 +1,6 @@
 {
   "source_experiment_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42",
-  "published_at_utc": "2026-03-22T10:01:10.046949+00:00",
+  "published_at_utc": "2026-03-23T10:51:31.453015+00:00",
   "artifacts": {
     "split_summary_plot": {
       "source_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/prepare_data_split_summary.png",

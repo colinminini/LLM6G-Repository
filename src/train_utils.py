@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
+import pandas as pd
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
@@ -26,16 +27,21 @@ if __package__ in {None, ""}:
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from src.canonical_eval import evaluate_forecaster_on_split
 from src.config import DEFAULT_DATASET_PATH, DEFAULT_QUANTILES, DEFAULT_TIMESTAMP_COL, TRAINABLE_BASELINE_MODELS, normalize_quantiles, parse_quantiles
-from src.experiment import build_experiment_manifest, default_experiment_dir, load_manifest, save_manifest
+from src.deepar_support import build_feature_spec, resolve_deepar_model_config
+from src.experiment import ExperimentManifest, build_experiment_manifest, default_experiment_dir, load_manifest, load_wide_dataframe, save_manifest
 from src.loader import DataLoaderConfig, build_dataloaders
-from src.models import DeepARForecast, LSTMForecast
+from src.models import DeepARForecast, LSTMForecast, TFTForecast
+from src.pipeline import build_forecaster, build_model_forecaster
+from src.tft_support import resolve_tft_model_config
 
 
 @dataclass
 class TrainerConfig:
-    max_epochs: int = 50
-    patience_epochs: int = 10
+    max_iterations: int = 5000
+    patience_iterations: int = 1000
+    validate_every: int = 250
     log_every: int = 50
     grad_clip: float | None = None
     show_batch_logs: bool = False
@@ -43,6 +49,14 @@ class TrainerConfig:
     log_dir: Path = Path("results/logs")
     run_name: str = "run"
     monitor_metric: str = "loss"
+
+
+@dataclass
+class CanonicalEvalConfig:
+    manifest: ExperimentManifest
+    full_df: pd.DataFrame
+    splits: tuple[str, ...] = ("val", "test")
+    max_windows_per_series: int | None = None
 
 
 _SUPPORTED_MODEL_TYPES = TRAINABLE_BASELINE_MODELS
@@ -126,23 +140,24 @@ def _format_duration(seconds: float | None) -> str:
 
 
 class _TrainingProgressDisplay:
-    def __init__(self, run_name: str, total_epochs: int, total_train_batches: int) -> None:
+    def __init__(self, run_name: str, total_iterations: int, total_train_batches: int) -> None:
         self.run_name = run_name
-        self.total_epochs = max(1, int(total_epochs))
+        self.total_iterations = max(1, int(total_iterations))
         self.total_train_batches = max(1, int(total_train_batches))
         self.started_at = time.perf_counter()
-        self.completed_progress = 0.0
+        self.completed_progress = 0
         self._bar = (
             tqdm(
-                total=self.total_epochs,
+                total=self.total_iterations,
                 desc=f"train:{run_name}",
-                unit="epoch",
+                unit="iter",
                 dynamic_ncols=True,
                 mininterval=0.5,
                 smoothing=0.15,
+                position=0,
                 leave=True,
                 bar_format=(
-                    "{l_bar}{bar}| {n:.2f}/{total:.0f} "
+                    "{l_bar}{bar}| {n:.0f}/{total:.0f} "
                     "[{elapsed}<{remaining}, {rate_fmt}{postfix}]"
                 ),
             )
@@ -151,19 +166,20 @@ class _TrainingProgressDisplay:
         )
         self.update(0, phase="warmup")
 
-    def _timings(self, completed_progress: float) -> tuple[float, float | None, float | None]:
+    def _timings(self, completed_progress: int) -> tuple[float, float | None, float | None]:
         elapsed = time.perf_counter() - self.started_at
         if completed_progress <= 0:
             return elapsed, None, None
-        estimated_total = elapsed * self.total_epochs / completed_progress
+        estimated_total = elapsed * self.total_iterations / completed_progress
         remaining = max(0.0, estimated_total - elapsed)
         return elapsed, estimated_total, remaining
 
     def update(
         self,
-        progress_epoch: float,
+        progress_iteration: int,
         *,
         phase: str,
+        iteration: int | None = None,
         epoch: int | None = None,
         batch_idx: int | None = None,
         batch_total: int | None = None,
@@ -172,8 +188,9 @@ class _TrainingProgressDisplay:
         val_loss: float | None = None,
         test_loss: float | None = None,
         patience: str | None = None,
+        **extra_fields: Any,
     ) -> None:
-        target_progress = max(0.0, min(float(progress_epoch), float(self.total_epochs)))
+        target_progress = max(0, min(int(progress_iteration), self.total_iterations))
         delta = target_progress - self.completed_progress
         if self._bar is not None and delta > 0:
             self._bar.update(delta)
@@ -186,8 +203,10 @@ class _TrainingProgressDisplay:
             "eta": _format_duration(remaining),
             "est_total": _format_duration(estimated_total),
         }
+        if iteration is not None:
+            postfix["iter"] = f"{min(int(iteration), self.total_iterations)}/{self.total_iterations}"
         if epoch is not None:
-            postfix["epoch"] = f"{min(int(epoch), self.total_epochs)}/{self.total_epochs}"
+            postfix["epoch"] = str(int(epoch))
         if batch_idx is not None and batch_total is not None:
             postfix["batch"] = f"{batch_idx}/{batch_total}"
         if batch_loss is not None:
@@ -200,13 +219,20 @@ class _TrainingProgressDisplay:
             postfix["test_loss"] = f"{test_loss:.3f}"
         if patience is not None:
             postfix["patience"] = patience
+        for key, value in extra_fields.items():
+            if value is None:
+                continue
+            if isinstance(value, float):
+                postfix[str(key)] = f"{value:.3f}"
+            else:
+                postfix[str(key)] = str(value)
 
         if self._bar is not None:
             self._bar.set_postfix(postfix, refresh=False)
         elif target_progress > 0:
             print(
                 f"[{self.run_name}] progress "
-                f"{target_progress:.2f}/{self.total_epochs} "
+                f"{target_progress}/{self.total_iterations} "
                 f"phase={phase} elapsed={postfix['elapsed']} "
                 f"eta={postfix['eta']} est_total={postfix['est_total']}"
             )
@@ -219,17 +245,17 @@ class _TrainingProgressDisplay:
 
     def close(self) -> None:
         total_elapsed = time.perf_counter() - self.started_at
-        completed_epochs = min(self.total_epochs, int(self.completed_progress + 1e-9))
+        completed_iterations = min(self.total_iterations, int(self.completed_progress))
         self.update(
             self.completed_progress,
-            phase="done" if completed_epochs >= self.total_epochs else "stopped",
-            epoch=max(1, completed_epochs) if completed_epochs > 0 else 1,
+            phase="done" if completed_iterations >= self.total_iterations else "stopped",
+            iteration=max(1, completed_iterations) if completed_iterations > 0 else 1,
             batch_idx=self.total_train_batches,
             batch_total=self.total_train_batches,
         )
         self.write(
             f"[{self.run_name}] wall_time={_format_duration(total_elapsed)} "
-            f"completed_epochs={completed_epochs}/{self.total_epochs}"
+            f"completed_iterations={completed_iterations}/{self.total_iterations}"
         )
         if self._bar is not None:
             self._bar.close()
@@ -305,8 +331,66 @@ class GaussianNLLLoss(nn.Module):
         return loss.mean()
 
 
+class DeepARGaussianNLLLoss(nn.Module):
+    """Sequence NLL for the paper-style Gaussian DeepAR outputs."""
+
+    output_type = "gaussian"
+    deepar_sequence_loss = True
+
+    def __init__(self, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.eps = float(eps)
+
+    def forward(
+        self,
+        outputs: dict[str, torch.Tensor],
+        target: torch.Tensor,
+        observed_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        mean = outputs["mean"]
+        sigma = torch.clamp(outputs["aux"], min=self.eps)
+        if target.dim() != 2:
+            raise ValueError("DeepAR sequence targets must have shape (batch, sequence_length).")
+        loss = 0.5 * ((target - mean) / sigma).pow(2) + torch.log(sigma) + 0.5 * math.log(
+            2 * math.pi
+        )
+        if observed_mask is None:
+            return loss.mean()
+        denom = torch.clamp(observed_mask.sum(), min=1.0)
+        return (loss * observed_mask).sum() / denom
+
+
+class NegativeBinomialNLLLoss(nn.Module):
+    """Sequence NLL for the paper-style Negative Binomial DeepAR outputs."""
+
+    output_type = "negative_binomial"
+    deepar_sequence_loss = True
+
+    def __init__(self, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.eps = float(eps)
+
+    def forward(
+        self,
+        outputs: dict[str, torch.Tensor],
+        target: torch.Tensor,
+        observed_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        mean = torch.clamp(outputs["mean"], min=self.eps)
+        alpha = torch.clamp(outputs["aux"], min=self.eps)
+        total_count = torch.clamp(1.0 / alpha, min=self.eps)
+        probs = total_count / (total_count + mean)
+        dist = torch.distributions.NegativeBinomial(total_count=total_count, probs=probs)
+        non_negative_target = torch.clamp(target, min=0.0)
+        loss = -dist.log_prob(non_negative_target)
+        if observed_mask is None:
+            return loss.mean()
+        denom = torch.clamp(observed_mask.sum(), min=1.0)
+        return (loss * observed_mask).sum() / denom
+
+
 class Trainer:
-    """Train a model with epoch-based early stopping."""
+    """Train a model with iteration-based early stopping."""
 
     def __init__(
         self,
@@ -317,6 +401,7 @@ class Trainer:
         config: TrainerConfig | None = None,
         model_config: Dict[str, Any] | None = None,
         quantiles: Sequence[float] | None = None,
+        canonical_eval_config: CanonicalEvalConfig | None = None,
     ) -> None:
         self.model = model
         self.optimizer = optimizer
@@ -324,6 +409,7 @@ class Trainer:
         self.device = device
         self.config = config or TrainerConfig()
         self.model_config = model_config or {}
+        self.canonical_eval_config = canonical_eval_config
         self.quantiles = tuple(float(q) for q in quantiles) if quantiles else ()
         self.median_index = (
             _select_median_index(self.quantiles) if self.quantiles else None
@@ -346,6 +432,8 @@ class Trainer:
 
         self.model.to(self.device)
         self.loss_fn.to(self.device)
+        self.final_canonical_metrics: dict[str, dict[str, Any]] = {}
+        self.final_monitor_metrics: dict[str, Any] = {}
 
     def _log_quantile_metrics(
         self, writer: SummaryWriter, phase: str, metrics: Sequence[float], step: int
@@ -371,11 +459,73 @@ class Trainer:
             "interval_count": 0,
         }
 
+    def _normalize_batch(self, batch: Any) -> dict[str, Any]:
+        if isinstance(batch, dict):
+            return batch
+        if isinstance(batch, (list, tuple)) and len(batch) == 2:
+            inputs, targets = batch
+            return {"context": inputs, "target": targets}
+        raise ValueError("Expected batch to be a dict or a (inputs, targets) tuple.")
+
+    def _move_batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
+        moved: dict[str, Any] = {}
+        for key, value in batch.items():
+            moved[key] = value.to(self.device) if torch.is_tensor(value) else value
+        return moved
+
     def _forward_batch(
         self,
-        inputs: torch.Tensor,
-        targets: torch.Tensor,
+        batch: dict[str, Any],
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        if getattr(self.model, "batch_format", None) == "deepar":
+            outputs = self.model.forward_train(
+                full_target=batch["full_target"],
+                time_features=batch["time_features"],
+                item_ids=batch["item_id"],
+                observed_mask=batch.get("observed_mask"),
+            )
+            loss = self.loss_fn(
+                outputs,
+                batch["full_target"],
+                batch.get("observed_mask"),
+            )
+            future_target = batch["target"]
+            preds_for_rmse = outputs["mean"][:, -future_target.size(1) :]
+            quantile_preds: torch.Tensor | None = None
+            if self.quantiles and not self.model.training:
+                # Validation path: use the actual inference path (autoregressive sampling)
+                # to produce honest coverage estimates comparable to forecast_eval.
+                # Teacher-forced analytical quantiles inflate coverage by ~3x vs inference.
+                with torch.no_grad():
+                    context = batch["full_target"][:, : self.model.context_length]
+                    draws = self.model.sample_forecasts(
+                        context=context,
+                        context_time_features=batch["time_features"][:, : self.model.context_length, :],
+                        future_time_features=batch["time_features"][:, self.model.context_length :, :],
+                        item_ids=batch["item_id"],
+                        num_samples=50,
+                        random_seed=42,
+                    )
+                    q = torch.tensor(self.quantiles, device=draws.device, dtype=draws.dtype)
+                    # draws: (batch, num_samples, horizon) → (num_q, batch, horizon) → (batch, horizon, num_q)
+                    quantile_preds = torch.quantile(draws, q, dim=1).permute(1, 2, 0)
+            return loss, preds_for_rmse, quantile_preds
+
+        if getattr(self.model, "batch_format", None) == "tft":
+            outputs = self.model(
+                batch["past_inputs"],
+                future_inputs=batch["future_inputs"],
+                static_categorical=batch["static_categorical"],
+            )
+            loss = self.loss_fn(outputs, batch["target"])
+            if self.quantiles and outputs.size(-1) != len(self.quantiles):
+                raise ValueError("Quantile count does not match TFT outputs.")
+            median_idx = self.median_index if self.median_index is not None else outputs.size(-1) // 2
+            preds_for_rmse = outputs[..., median_idx]
+            return loss, preds_for_rmse, outputs
+
+        inputs = batch["context"]
+        targets = batch["target"]
         if getattr(self.model, "uses_targets", False):
             outputs = self.model(inputs, targets=targets)
         else:
@@ -489,17 +639,13 @@ class Trainer:
         acc = self._make_metrics_accumulator()
         with torch.no_grad():
             for batch_idx, batch in enumerate(loader, start=1):
-                if isinstance(batch, (list, tuple)) and len(batch) == 2:
-                    inputs, targets = batch
-                else:
-                    raise ValueError("Expected batch to be a (inputs, targets) tuple.")
-
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
+                batch_dict = self._move_batch_to_device(self._normalize_batch(batch))
+                targets = batch_dict["target"]
                 if targets.dim() == 1:
                     targets = targets.unsqueeze(-1)
+                batch_dict["target"] = targets
 
-                loss, preds_for_rmse, quantile_preds = self._forward_batch(inputs, targets)
+                loss, preds_for_rmse, quantile_preds = self._forward_batch(batch_dict)
                 self._update_metrics_accumulator(
                     acc,
                     loss=loss.detach(),
@@ -515,6 +661,164 @@ class Trainer:
                     )
         return self._finalize_metrics_accumulator(acc)
 
+    def _canonical_splits(self) -> tuple[str, ...]:
+        if self.canonical_eval_config is None:
+            return ()
+        return tuple(str(split).strip().lower() for split in self.canonical_eval_config.splits)
+
+    def _run_canonical_eval_from_forecaster(
+        self,
+        forecaster: Any,
+        *,
+        training_progress: _TrainingProgressDisplay | None = None,
+        training_iteration: int | None = None,
+        training_epoch: int | None = None,
+        training_batch_idx: int | None = None,
+        training_batch_total: int | None = None,
+        training_loss: float | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        if self.canonical_eval_config is None:
+            return {}
+        results: dict[str, dict[str, Any]] = {}
+        model_name = str(self.model_config.get("model_type", self.config.run_name))
+        show_progress = str(model_name).strip().lower() == "deepar"
+        for split in self._canonical_splits():
+            started_at = time.perf_counter()
+            if show_progress:
+                print(
+                    f"[{self.config.run_name}] canonical_{split} starting "
+                    f"(sampled forecast replay)"
+                )
+            progress_callback = None
+            progress_label = None
+            progress_position = 0
+            progress_leave = True
+            if show_progress and training_progress is not None and training_iteration is not None:
+                def _callback(
+                    completed: int,
+                    total: int,
+                    phase_name: str,
+                    fields: dict[str, Any],
+                ) -> None:
+                    training_progress.update(
+                        training_iteration,
+                        phase=f"canonical_{split}",
+                        iteration=training_iteration,
+                        epoch=training_epoch,
+                        batch_idx=training_batch_idx,
+                        batch_total=training_batch_total,
+                        train_loss=training_loss,
+                        eval_split=split,
+                        eval_window=f"{completed}/{total}",
+                        eval_elapsed=_format_duration(fields.get("eval_elapsed")),
+                        eval_eta=_format_duration(fields.get("eval_eta")),
+                        eval_est_total=_format_duration(fields.get("eval_est_total")),
+                        eval_phase=phase_name,
+                        eval_series=fields.get("series"),
+                        eval_rmse=fields.get("rmse_q50"),
+                        eval_coverage=fields.get("coverage_q95"),
+                    )
+
+                progress_callback = _callback
+            elif show_progress:
+                progress_label = f"{self.config.run_name}:canonical_{split}"
+                progress_position = 0
+                progress_leave = True
+            _, metrics = evaluate_forecaster_on_split(
+                df=self.canonical_eval_config.full_df,
+                manifest=self.canonical_eval_config.manifest,
+                split=split,
+                model_name=model_name,
+                forecaster=forecaster,
+                device=str(self.device),
+                max_windows_per_series=self.canonical_eval_config.max_windows_per_series,
+                collect_rows=False,
+                progress_label=progress_label,
+                progress_position=progress_position,
+                progress_leave=progress_leave,
+                progress_callback=progress_callback,
+            )
+            results[split] = metrics
+            if show_progress:
+                elapsed = time.perf_counter() - started_at
+                print(
+                    f"[{self.config.run_name}] canonical_{split} completed in "
+                    f"{elapsed:.1f}s rmse_q50={float(metrics['rmse_q50']):.3f}"
+                )
+        return results
+
+    def _run_current_model_canonical_eval(
+        self,
+        *,
+        training_progress: _TrainingProgressDisplay | None = None,
+        training_iteration: int | None = None,
+        training_epoch: int | None = None,
+        training_batch_idx: int | None = None,
+        training_batch_total: int | None = None,
+        training_loss: float | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        model_name = str(self.model_config.get("model_type", "")).strip().lower()
+        if not model_name or self.canonical_eval_config is None:
+            return {}
+        forecaster = build_model_forecaster(
+            model_name,
+            model=self.model,
+            context_length=int(
+                self.model_config.get(
+                    "context_length",
+                    getattr(self.model, "context_length", 1),
+                )
+            ),
+            forecast_length=int(
+                self.model_config.get(
+                    "forecast_length",
+                    getattr(self.model, "forecast_length", 1),
+                )
+            ),
+            quantiles=self.quantiles or DEFAULT_QUANTILES,
+            model_config=self.model_config,
+            deepar_num_samples=int(self.model_config.get("deepar_num_samples", 200)),
+            device=self.device,
+        )
+        return self._run_canonical_eval_from_forecaster(
+            forecaster,
+            training_progress=training_progress,
+            training_iteration=training_iteration,
+            training_epoch=training_epoch,
+            training_batch_idx=training_batch_idx,
+            training_batch_total=training_batch_total,
+            training_loss=training_loss,
+        )
+
+    def _run_best_checkpoint_canonical_eval(
+        self,
+        *,
+        checkpoint_path: Path,
+    ) -> dict[str, dict[str, Any]]:
+        model_name = str(self.model_config.get("model_type", "")).strip().lower()
+        if not model_name or self.canonical_eval_config is None:
+            return {}
+        forecaster = build_forecaster(
+            model_name,
+            checkpoint_path=checkpoint_path,
+            context_length=int(
+                self.model_config.get(
+                    "context_length",
+                    getattr(self.model, "context_length", 1),
+                )
+            ),
+            forecast_length=int(
+                self.model_config.get(
+                    "forecast_length",
+                    getattr(self.model, "forecast_length", 1),
+                )
+            ),
+            quantiles=self.quantiles or DEFAULT_QUANTILES,
+            deepar_num_samples=int(self.model_config.get("deepar_num_samples", 200)),
+            device=self.device,
+        )
+        return self._run_canonical_eval_from_forecaster(forecaster)
+
     def fit(
         self,
         train_loader: DataLoader,
@@ -522,90 +826,93 @@ class Trainer:
         test_loader: DataLoader | None = None,
     ) -> Dict[str, List[float]]:
         history: Dict[str, List[float]] = {
-            "epoch": [],
+            "iteration": [],
             "train_loss": [],
             "train_rmse": [],
             "val_loss": [],
             "val_rmse": [],
+            "val_pinball_q50": [],
+            "val_pinball_q95": [],
             "train_coverage": [],
             "val_coverage": [],
             "train_interval_width": [],
             "val_interval_width": [],
         }
-        if test_loader is not None:
-            history["test_loss"] = []
-            history["test_rmse"] = []
-            history["test_coverage"] = []
-            history["test_interval_width"] = []
         best_metric: float | None = None
-        patience_epochs_used = 0
+        patience_iterations_used = 0
         writer = SummaryWriter(log_dir=self.config.log_dir / self.config.run_name)
         best_path = self.config.save_dir / f"{self.config.run_name}_best.pt"
         last_summary: Dict[str, Any] | None = None
         total_train_batches = max(1, len(train_loader))
         progress = _TrainingProgressDisplay(
             self.config.run_name,
-            self.config.max_epochs,
+            self.config.max_iterations,
             total_train_batches,
         )
 
         try:
+            train_iter = iter(train_loader)
+            interval_acc = self._make_metrics_accumulator()
+            interval_start = time.perf_counter()
+            validate_every = max(1, min(self.config.validate_every, self.config.max_iterations))
             log_every = max(1, self.config.log_every)
-            global_step = 0
+            last_batch_loss: float | None = None
 
-            for epoch in range(1, self.config.max_epochs + 1):
-                interval_acc = self._make_metrics_accumulator()
-                interval_start = time.perf_counter()
-                last_batch_loss: float | None = None
+            for iteration in range(1, self.config.max_iterations + 1):
+                try:
+                    batch = next(train_iter)
+                except StopIteration:
+                    train_iter = iter(train_loader)
+                    batch = next(train_iter)
 
-                for batch_idx, batch in enumerate(train_loader, start=1):
-                    if isinstance(batch, (list, tuple)) and len(batch) == 2:
-                        inputs, targets = batch
-                    else:
-                        raise ValueError("Expected batch to be a (inputs, targets) tuple.")
+                self.model.train()
+                batch_dict = self._move_batch_to_device(self._normalize_batch(batch))
+                targets = batch_dict["target"]
+                if targets.dim() == 1:
+                    targets = targets.unsqueeze(-1)
+                batch_dict["target"] = targets
 
-                    self.model.train()
-                    inputs = inputs.to(self.device)
-                    targets = targets.to(self.device)
-                    if targets.dim() == 1:
-                        targets = targets.unsqueeze(-1)
+                self.optimizer.zero_grad(set_to_none=True)
+                loss, preds_for_rmse, quantile_preds = self._forward_batch(batch_dict)
+                loss.backward()
+                if self.config.grad_clip is not None:
+                    nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+                self.optimizer.step()
+                last_batch_loss = float(loss.item())
 
-                    self.optimizer.zero_grad(set_to_none=True)
-                    loss, preds_for_rmse, quantile_preds = self._forward_batch(inputs, targets)
-                    loss.backward()
-                    if self.config.grad_clip is not None:
-                        nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
-                    self.optimizer.step()
-                    global_step += 1
-                    last_batch_loss = float(loss.item())
-
-                    self._update_metrics_accumulator(
-                        interval_acc,
-                        loss=loss.detach(),
-                        preds_for_rmse=preds_for_rmse.detach(),
-                        targets=targets.detach(),
-                        quantile_preds=quantile_preds.detach() if quantile_preds is not None else None,
+                self._update_metrics_accumulator(
+                    interval_acc,
+                    loss=loss.detach(),
+                    preds_for_rmse=preds_for_rmse.detach(),
+                    targets=targets.detach(),
+                    quantile_preds=quantile_preds.detach() if quantile_preds is not None else None,
+                )
+                writer.add_scalar("loss/train_batch", loss.item(), iteration)
+                writer.add_scalar(
+                    "metrics/learning_rate",
+                    self.optimizer.param_groups[0]["lr"],
+                    iteration,
+                )
+                epoch = ((iteration - 1) // total_train_batches) + 1
+                batch_idx = ((iteration - 1) % total_train_batches) + 1
+                progress.update(
+                    iteration,
+                    phase="train",
+                    iteration=iteration,
+                    epoch=epoch,
+                    batch_idx=batch_idx,
+                    batch_total=total_train_batches,
+                    batch_loss=last_batch_loss,
+                )
+                if self.config.show_batch_logs and (iteration == 1 or iteration % log_every == 0):
+                    progress.write(
+                        f"[{self.config.run_name}] train iter "
+                        f"{iteration}/{self.config.max_iterations} "
+                        f"batch_loss={loss.item():.3f}"
                     )
-                    writer.add_scalar("loss/train_batch", loss.item(), global_step)
-                    writer.add_scalar(
-                        "metrics/learning_rate",
-                        self.optimizer.param_groups[0]["lr"],
-                        global_step,
-                    )
-                    progress.update(
-                        (epoch - 1) + (batch_idx / total_train_batches),
-                        phase="train",
-                        epoch=epoch,
-                        batch_idx=batch_idx,
-                        batch_total=total_train_batches,
-                        batch_loss=last_batch_loss,
-                    )
-                    if self.config.show_batch_logs and batch_idx % log_every == 0:
-                        progress.write(
-                            f"[{self.config.run_name}] epoch {epoch}/{self.config.max_epochs} "
-                            f"batch {batch_idx}/{total_train_batches} "
-                            f"batch_loss={loss.item():.3f}"
-                        )
+
+                if iteration % validate_every != 0 and iteration != self.config.max_iterations:
+                    continue
 
                 (
                     train_loss,
@@ -616,90 +923,92 @@ class Trainer:
                 ) = self._finalize_metrics_accumulator(interval_acc)
                 eval_start = time.perf_counter()
                 (
-                    val_loss,
-                    val_rmse,
-                    val_quantiles,
-                    val_coverage,
-                    val_width,
+                    monitor_val_loss,
+                    monitor_val_rmse,
+                    monitor_val_quantiles,
+                    monitor_val_coverage,
+                    monitor_val_width,
                 ) = self._run_loader(
                     val_loader,
-                    phase="val",
+                    phase="val_monitor",
                     writer=writer,
-                    step=epoch,
+                    step=iteration,
                 )
+                val_metrics = {
+                    "rmse_q50": float(monitor_val_rmse),
+                    "pinball_q50": (
+                        float(monitor_val_quantiles[self.median_index])
+                        if monitor_val_quantiles and self.median_index is not None
+                        else float("nan")
+                    ),
+                    "pinball_q95": (
+                        float(monitor_val_quantiles[self.coverage_index])
+                        if monitor_val_quantiles and self.coverage_index is not None
+                        else float("nan")
+                    ),
+                    "coverage_q95": (
+                        float(monitor_val_coverage)
+                        if monitor_val_coverage is not None
+                        else float("nan")
+                    ),
+                    "interval_width_mean": (
+                        float(monitor_val_width)
+                        if monitor_val_width is not None
+                        else float("nan")
+                    ),
+                }
 
-                history["epoch"].append(epoch)
+                history["iteration"].append(iteration)
                 history["train_loss"].append(train_loss)
                 history["train_rmse"].append(train_rmse)
-                history["val_loss"].append(val_loss)
-                history["val_rmse"].append(val_rmse)
+                history["val_loss"].append(monitor_val_loss)
+                history["val_rmse"].append(float(val_metrics["rmse_q50"]))
+                history["val_pinball_q50"].append(float(val_metrics["pinball_q50"]))
+                history["val_pinball_q95"].append(float(val_metrics["pinball_q95"]))
                 history["train_coverage"].append(
                     train_coverage if train_coverage is not None else float("nan")
                 )
                 history["val_coverage"].append(
-                    val_coverage if val_coverage is not None else float("nan")
+                    float(val_metrics["coverage_q95"])
                 )
                 history["train_interval_width"].append(
                     train_width if train_width is not None else float("nan")
                 )
                 history["val_interval_width"].append(
-                    val_width if val_width is not None else float("nan")
+                    float(val_metrics["interval_width_mean"])
                 )
 
-                writer.add_scalar("loss/train", train_loss, epoch)
-                writer.add_scalar("loss/val", val_loss, epoch)
-                writer.add_scalar("rmse/train", train_rmse, epoch)
-                writer.add_scalar("rmse/val", val_rmse, epoch)
-                self._log_quantile_metrics(writer, "train", train_quantiles, epoch)
-                self._log_quantile_metrics(writer, "val", val_quantiles, epoch)
+                writer.add_scalar("loss/train", train_loss, iteration)
+                writer.add_scalar("loss/val_monitor", monitor_val_loss, iteration)
+                writer.add_scalar("rmse/train", train_rmse, iteration)
+                writer.add_scalar("rmse/val", float(val_metrics["rmse_q50"]), iteration)
+                self._log_quantile_metrics(writer, "train", train_quantiles, iteration)
+                writer.add_scalar("pinball/val/q50", float(val_metrics["pinball_q50"]), iteration)
+                writer.add_scalar("pinball/val/q95", float(val_metrics["pinball_q95"]), iteration)
                 if train_coverage is not None:
-                    writer.add_scalar("coverage/train", train_coverage, epoch)
-                if val_coverage is not None:
-                    writer.add_scalar("coverage/val", val_coverage, epoch)
+                    writer.add_scalar("coverage/train", train_coverage, iteration)
+                writer.add_scalar("coverage/val", float(val_metrics["coverage_q95"]), iteration)
                 if train_width is not None:
-                    writer.add_scalar("interval_width/train", train_width, epoch)
-                if val_width is not None:
-                    writer.add_scalar("interval_width/val", val_width, epoch)
-
-                if test_loader is not None:
-                    (
-                        test_loss,
-                        test_rmse,
-                        test_quantiles,
-                        test_coverage,
-                        test_width,
-                    ) = self.evaluate(
-                        test_loader,
-                        step=epoch,
-                        writer=writer,
-                    )
-                    history["test_loss"].append(test_loss)
-                    history["test_rmse"].append(test_rmse)
-                    history["test_coverage"].append(
-                        test_coverage if test_coverage is not None else float("nan")
-                    )
-                    history["test_interval_width"].append(
-                        test_width if test_width is not None else float("nan")
-                    )
-                    writer.add_scalar("loss/test", test_loss, epoch)
-                    writer.add_scalar("rmse/test", test_rmse, epoch)
-                    self._log_quantile_metrics(writer, "test", test_quantiles, epoch)
-                    if test_coverage is not None:
-                        writer.add_scalar("coverage/test", test_coverage, epoch)
-                    if test_width is not None:
-                        writer.add_scalar("interval_width/test", test_width, epoch)
+                    writer.add_scalar("interval_width/train", train_width, iteration)
+                writer.add_scalar(
+                    "interval_width/val",
+                    float(val_metrics["interval_width_mean"]),
+                    iteration,
+                )
 
                 interval_time = time.perf_counter() - interval_start
                 eval_time = time.perf_counter() - eval_start
-                writer.add_scalar("metrics/train_epoch_time_sec", interval_time, epoch)
-                writer.add_scalar("metrics/eval_time_sec", eval_time, epoch)
+                writer.add_scalar("metrics/train_interval_time_sec", interval_time, iteration)
+                writer.add_scalar("metrics/eval_time_sec", eval_time, iteration)
 
                 monitor_name, monitor_value, monitor_mode = self._select_monitor_value(
-                    val_loss, val_coverage
+                    monitor_val_loss,
+                    monitor_val_coverage,
                 )
+                interval_iterations = int(interval_acc["num_batches"])
                 if best_metric is None:
                     best_metric = monitor_value
-                    patience_epochs_used = 0
+                    patience_iterations_used = 0
                     self._save_weights(best_path)
                 else:
                     improved = (
@@ -709,125 +1018,110 @@ class Trainer:
                     )
                     if improved:
                         best_metric = monitor_value
-                        patience_epochs_used = 0
+                        patience_iterations_used = 0
                         self._save_weights(best_path)
                     else:
-                        patience_epochs_used += 1
-                writer.add_scalar("metrics/best_val", best_metric, epoch)
+                        patience_iterations_used += interval_iterations
+                writer.add_scalar("metrics/best_val", best_metric, iteration)
                 writer.add_scalar(
-                    "metrics/patience_epochs",
-                    patience_epochs_used,
-                    epoch,
+                    "metrics/patience_iterations",
+                    patience_iterations_used,
+                    iteration,
                 )
                 progress.update(
-                    float(epoch),
+                    iteration,
                     phase="eval",
+                    iteration=iteration,
                     epoch=epoch,
-                    batch_idx=total_train_batches,
+                    batch_idx=batch_idx,
                     batch_total=total_train_batches,
                     batch_loss=last_batch_loss,
                     train_loss=float(train_loss),
-                    val_loss=float(val_loss),
-                    test_loss=float(test_loss) if test_loader is not None else None,  # pyright: ignore[reportPossiblyUnboundVariable]
-                    patience=f"{patience_epochs_used}/{self.config.patience_epochs}",
+                    val_loss=float(monitor_val_loss),
+                    patience=f"{patience_iterations_used}/{self.config.patience_iterations}",
                 )
 
                 last_summary = {
-                    "epoch": epoch,
+                    "iteration": iteration,
                     "train_loss": train_loss,
                     "train_rmse": train_rmse,
-                    "val_loss": val_loss,
-                    "val_rmse": val_rmse,
+                    "monitor_val_loss": monitor_val_loss,
+                    "monitor_val_rmse": float(monitor_val_rmse),
                     "train_quantiles": train_quantiles,
-                    "val_quantiles": val_quantiles,
                     "train_coverage": train_coverage,
-                    "val_coverage": val_coverage,
                     "train_width": train_width,
-                    "val_width": val_width,
+                    "val_metrics": val_metrics,
                     "best_val": best_metric,
                     "monitor_name": monitor_name,
-                    "patience_epochs": patience_epochs_used,
+                    "patience_iterations": patience_iterations_used,
                 }
-                if test_loader is not None:
-                    last_summary.update(
-                        {
-                            "test_loss": test_loss,  # pyright: ignore[reportPossiblyUnboundVariable]
-                            "test_rmse": test_rmse,  # type: ignore
-                            "test_quantiles": test_quantiles,  # pyright: ignore[reportPossiblyUnboundVariable]
-                            "test_coverage": test_coverage,  # pyright: ignore[reportPossiblyUnboundVariable]
-                            "test_width": test_width,  # type: ignore
-                        }
-                    )
 
                 message = (
-                    f"[{self.config.run_name}] epoch {epoch}/{self.config.max_epochs} "
+                    f"[{self.config.run_name}] iter {iteration}/{self.config.max_iterations} "
                     f"- train_loss={train_loss:.3f} "
                     f"- train_rmse={train_rmse:.3f} "
-                    f"- val_loss={val_loss:.3f} "
-                    f"- val_rmse={val_rmse:.3f} "
-                )
-                if test_loader is not None:
-                    message += (
-                        f"- test_loss={test_loss:.3f} "  # pyright: ignore[reportPossiblyUnboundVariable]
-                        f"- test_rmse={test_rmse:.3f} "  # pyright: ignore[reportPossiblyUnboundVariable]
+                    f"- monitor_val_loss={monitor_val_loss:.3f} "
+                    f"- val_rmse={float(val_metrics['rmse_q50']):.3f} "
                 )
                 message += (
-                    f"- patience_epochs={patience_epochs_used}/{self.config.patience_epochs}"
+                    f"- patience_iters={patience_iterations_used}/{self.config.patience_iterations}"
                 )
                 progress.write(message)
 
-                if patience_epochs_used >= self.config.patience_epochs:
+                if patience_iterations_used >= self.config.patience_iterations:
                     progress.write(
-                        f"[{self.config.run_name}] Early stopping at epoch "
-                        f"{epoch}: train_rmse={train_rmse:.3f}, val_rmse={val_rmse:.3f}"
-                        + (
-                            f", test_rmse={test_rmse:.3f}"  # pyright: ignore[reportPossiblyUnboundVariable]
-                            if test_loader is not None
-                            else ""
-                        )
+                        f"[{self.config.run_name}] Early stopping at iteration "
+                        f"{iteration}: train_rmse={train_rmse:.3f}, "
+                        f"val_rmse={float(val_metrics['rmse_q50']):.3f}"
                     )
                     break
+
+                interval_acc = self._make_metrics_accumulator()
+                interval_start = time.perf_counter()
         finally:
             progress.close()
             writer.close()
+
+        self.final_canonical_metrics = {}
 
         if last_summary is not None:
             metrics: Dict[str, Any] = {
                 "train_loss": last_summary["train_loss"],
                 "train_rmse": last_summary["train_rmse"],
-                "val_loss": last_summary["val_loss"],
-                "val_rmse": last_summary["val_rmse"],
+                "monitor_val_loss": last_summary["monitor_val_loss"],
+                "monitor_val_rmse": last_summary["monitor_val_rmse"],
             }
             for q, value in zip(self.quantiles, last_summary["train_quantiles"]):
                 metrics[f"train_{_format_quantile_key(q)}"] = value
-            for q, value in zip(self.quantiles, last_summary["val_quantiles"]):
-                metrics[f"val_{_format_quantile_key(q)}"] = value
             if last_summary.get("train_coverage") is not None:
                 metrics["train_coverage"] = last_summary["train_coverage"]
-            if last_summary.get("val_coverage") is not None:
-                metrics["val_coverage"] = last_summary["val_coverage"]
             if self.coverage_quantile is not None:
                 metrics["coverage_quantile"] = self.coverage_quantile
             if last_summary.get("train_width") is not None:
                 metrics["train_interval_width"] = last_summary["train_width"]
-            if last_summary.get("val_width") is not None:
-                metrics["val_interval_width"] = last_summary["val_width"]
-            if test_loader is not None:
-                metrics["test_loss"] = last_summary.get("test_loss")
-                metrics["test_rmse"] = last_summary.get("test_rmse")
-                for q, value in zip(self.quantiles, last_summary.get("test_quantiles", [])):
-                    metrics[f"test_{_format_quantile_key(q)}"] = value
-                if last_summary.get("test_coverage") is not None:
-                    metrics["test_coverage"] = last_summary.get("test_coverage")
-                if last_summary.get("test_width") is not None:
-                    metrics["test_interval_width"] = last_summary.get("test_width")
+
+            for split_name, payload in {"val": last_summary["val_metrics"]}.items():
+                metrics[f"{split_name}_rmse_q50"] = payload.get("rmse_q50")
+                metrics[f"{split_name}_pinball_q50"] = payload.get("pinball_q50")
+                metrics[f"{split_name}_pinball_q95"] = payload.get("pinball_q95")
+                metrics[f"{split_name}_coverage_q95"] = payload.get("coverage_q95")
+                metrics[f"{split_name}_interval_width_mean"] = payload.get("interval_width_mean")
             metrics["best_val"] = last_summary["best_val"]
-            metrics["last_epoch"] = last_summary["epoch"]
-            metrics["patience_epochs"] = (
-                f"{last_summary['patience_epochs']}/{self.config.patience_epochs}"
+            metrics["last_iteration"] = last_summary["iteration"]
+            metrics["patience_iterations"] = (
+                f"{last_summary['patience_iterations']}/{self.config.patience_iterations}"
             )
             if last_summary.get("monitor_name"):
                 metrics["monitor"] = last_summary["monitor_name"]
+
+            self.final_monitor_metrics = {
+                "monitor_val_loss": last_summary["monitor_val_loss"],
+                "monitor_val_rmse": last_summary["monitor_val_rmse"],
+                "val": dict(last_summary["val_metrics"]),
+                "best_val": last_summary["best_val"],
+                "last_iteration": last_summary["iteration"],
+                "monitor": last_summary.get("monitor_name"),
+            }
             _display_metrics_table("Final metrics", metrics)
 
         return history
@@ -840,7 +1134,13 @@ class Trainer:
 
     def _save_weights(self, out_path: Path) -> None:
         self.config.save_dir.mkdir(parents=True, exist_ok=True)
-        torch.save(self.model.state_dict(), out_path)
+        torch.save(
+            {
+                "state_dict": self.model.state_dict(),
+                "model_config": self.model_config,
+            },
+            out_path,
+        )
 
     def _select_monitor_value(
         self, val_loss: float, val_coverage: float | None
@@ -874,10 +1174,10 @@ def train_model(
     context_length: int = 128,
     forecast_length: int = 1,
     batch_size: int = 64,
-    max_epochs: int = 50,
-    patience_epochs: int = 10,
-    max_iterations: int | None = None,
-    patience_iterations: int | None = None,
+    train_window_step: int = 1,
+    max_iterations: int = 5000,
+    patience_iterations: int = 1000,
+    validate_every: int = 250,
     log_every: int = 50,
     learning_rate: float = 1e-3,
     hidden_size: int = 128,
@@ -891,7 +1191,7 @@ def train_model(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_type = model_type.lower()
     if model_type not in _SUPPORTED_MODEL_TYPES:
-        raise ValueError("model_type must be one of: lstm, deepar.")
+        raise ValueError("model_type must be one of: lstm, deepar, tft.")
 
     if manifest_path is not None:
         manifest = load_manifest(manifest_path)
@@ -909,23 +1209,28 @@ def train_model(
     root_dir = Path(output_dir) if output_dir is not None else default_experiment_dir(manifest)
     manifest_path = save_manifest(manifest, root_dir / "manifest.json")
 
+    full_df = load_wide_dataframe(manifest.dataset_path, manifest.timestamp_col)
+    feature_spec = build_feature_spec(
+        full_df[manifest.timestamp_col],
+        cadence=manifest.cadence,
+        train_end_idx=manifest.train_split.end_idx,
+    )
+
     data_cfg = DataLoaderConfig(
         data_path=Path(manifest.dataset_path),
         manifest_path=manifest_path,
         timestamp_col=manifest.timestamp_col,
+        model_name=model_type,
         context_length=manifest.context_length,
         forecast_length=manifest.horizon,
+        train_window_step=max(1, int(train_window_step)),
         batch_size=batch_size,
         shuffle_train=True,
         pin_memory=device.type == "cuda",
+        deepar_feature_spec=feature_spec if model_type == "deepar" else None,
+        tft_feature_spec=feature_spec if model_type == "tft" else None,
     )
     train_loader, val_loader, test_loader = build_dataloaders(data_cfg)
-    steps_per_epoch = max(1, len(train_loader))
-    if max_iterations is not None:
-        max_epochs = max(1, math.ceil(int(max_iterations) / steps_per_epoch))
-    if patience_iterations is not None:
-        patience_epochs = max(1, math.ceil(int(patience_iterations) / steps_per_epoch))
-
     if model_type == "lstm":
         model = LSTMForecast(
             context_length=manifest.context_length,
@@ -934,12 +1239,27 @@ def train_model(
             num_layers=num_layers,
             quantiles=manifest.quantiles,
         )
-    else:
+    elif model_type == "deepar":
         model = DeepARForecast(
             context_length=manifest.context_length,
             forecast_length=manifest.horizon,
             hidden_size=hidden_size,
             num_layers=num_layers,
+            num_time_features=feature_spec.num_features,
+            num_items=manifest.num_series,
+        )
+    else:
+        model = TFTForecast(
+            context_length=manifest.context_length,
+            forecast_length=manifest.horizon,
+            hidden_size=hidden_size,
+            num_lstm_layers=num_layers,
+            num_heads=4,
+            quantiles=manifest.quantiles,
+            num_static_categorical=1,
+            static_categorical_cardinalities=(manifest.num_series,),
+            num_past_features=1 + feature_spec.num_features,
+            num_future_features=feature_spec.num_features,
         )
 
     model_config = {
@@ -951,6 +1271,19 @@ def train_model(
         "quantiles": list(manifest.quantiles),
         "dataset_path": manifest.dataset_path,
     }
+    if model_type == "deepar":
+        model_config = resolve_deepar_model_config(
+            manifest=manifest,
+            feature_spec=feature_spec,
+        )
+    elif model_type == "tft":
+        model_config = resolve_tft_model_config(
+            manifest=manifest,
+            hidden_size=hidden_size,
+            num_heads=4,
+            num_lstm_layers=num_layers,
+            feature_spec=feature_spec,
+        )
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     if model_type == "deepar":
@@ -961,8 +1294,9 @@ def train_model(
         loss_fn = QuantileLoss(manifest.quantiles)
 
     trainer_cfg = TrainerConfig(
-        max_epochs=max_epochs,
-        patience_epochs=patience_epochs,
+        max_iterations=max_iterations,
+        patience_iterations=patience_iterations,
+        validate_every=validate_every,
         log_every=log_every,
         save_dir=root_dir / "checkpoints",
         log_dir=root_dir / "logs",
@@ -977,6 +1311,10 @@ def train_model(
         config=trainer_cfg,
         model_config=model_config,
         quantiles=manifest.quantiles,
+        canonical_eval_config=CanonicalEvalConfig(
+            manifest=manifest,
+            full_df=full_df,
+        ),
     )
     return trainer.fit(train_loader, val_loader, test_loader)
 
@@ -997,8 +1335,10 @@ def train_all(
     context_length: int,
     forecast_length: int,
     quantiles: Sequence[float],
-    max_epochs: int,
-    patience_epochs: int,
+    train_window_step: int,
+    max_iterations: int,
+    patience_iterations: int,
+    validate_every: int,
     log_every: int,
     hidden_size: int,
     num_layers: int,
@@ -1015,8 +1355,10 @@ def train_all(
             context_length=context_length,
             forecast_length=forecast_length,
             quantiles=quantiles,
-            max_epochs=max_epochs,
-            patience_epochs=patience_epochs,
+            train_window_step=train_window_step,
+            max_iterations=max_iterations,
+            patience_iterations=patience_iterations,
+            validate_every=validate_every,
             log_every=log_every,
             hidden_size=hidden_size,
             num_layers=num_layers,
@@ -1036,7 +1378,7 @@ def parse_args() -> argparse.Namespace:
         "--model-type",
         default="lstm",
         help=(
-            "Model family to train: lstm or deepar. "
+            "Model family to train: lstm, deepar, or tft. "
             "Can also be a comma-separated list or 'all'."
         ),
     )
@@ -1051,12 +1393,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-length", type=int, default=128)
     parser.add_argument("--forecast-length", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--max-iterations", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--patience-iterations", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--validate-every", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--train-window-step", type=int, default=1)
+    parser.add_argument("--max-iterations", type=int, default=5000)
+    parser.add_argument("--patience-iterations", type=int, default=1000)
+    parser.add_argument("--validate-every", type=int, default=250)
     parser.add_argument("--log-every", type=int, default=50)
-    parser.add_argument("--max-epochs", type=int, default=50)
-    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--max-epochs", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--patience", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--num-layers", type=int, default=2)
@@ -1082,10 +1425,10 @@ def main() -> None:
         context_length=args.context_length,
         forecast_length=args.forecast_length,
         batch_size=args.batch_size,
-        max_epochs=args.max_epochs,
-        patience_epochs=args.patience,
-        max_iterations=args.max_iterations,
-        patience_iterations=args.patience_iterations,
+        train_window_step=args.train_window_step,
+        max_iterations=args.max_iterations if args.max_iterations is not None else 5000,
+        patience_iterations=args.patience_iterations if args.patience_iterations is not None else 1000,
+        validate_every=args.validate_every if args.validate_every is not None else 250,
         log_every=args.log_every if args.log_every is not None else 50,
         learning_rate=args.learning_rate,
         hidden_size=args.hidden_size,

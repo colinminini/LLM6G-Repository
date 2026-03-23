@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,17 +19,28 @@ if __package__ in {None, ""}:
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from src.change_detection import RupturesPeltDetector
+from src.canonical_eval import canonical_window_policy, evaluate_forecaster_on_split
+from src.change_detection import build_change_point_detector
 from src.config import (
+    DEFAULT_CP_DETECTOR,
+    DEFAULT_CP_EXCLUSION_RADIUS,
     DEFAULT_CP_JUMP,
     DEFAULT_CP_MIN_SIZE,
     DEFAULT_CP_MODEL,
     DEFAULT_CP_PENALTY,
+    DEFAULT_CP_PERIOD_LENGTH,
+    DEFAULT_CP_SCORE_THRESHOLD,
     DEFAULT_DATASET_PATH,
+    DEFAULT_DEEPAR_NUM_SAMPLES,
     DEFAULT_RANDOM_SEED,
     DEFAULT_TIMESTAMP_COL,
     DEFAULT_TOLERANCE,
 )
+from src.cp_config import default_cp_config, load_best_cp_configs
+from src.device import AUTO_DEVICE, resolve_device_name
+from src.experiment import build_canonical_eval_starts_map, daily_seasonal_period, load_manifest, load_wide_dataframe
+from src.pipeline import build_forecaster
+from src.progress import StageProgressDisplay
 from src.system_metrics import clamp_upper_quantile, extract_pre_change_interval, json_array, resolve_tau, safe_ceiling_from_tau
 
 
@@ -86,17 +98,11 @@ class SklearnDeltaCalibrator:
         features: pd.DataFrame,
         fit: bool,
     ) -> pd.DataFrame:
-        encoded = pd.get_dummies(features, columns=["series"], dtype=float)
-        encoded = encoded.replace([np.inf, -np.inf], np.nan)
+        encoded = features.replace([np.inf, -np.inf], np.nan)
         if fit:
             self.feature_columns_ = encoded.columns.tolist()
-            self.numeric_columns_ = [
-                col for col in features.columns if col != "series"
-            ]
             return encoded
-
-        encoded = encoded.reindex(columns=self.feature_columns_, fill_value=0.0)
-        return encoded
+        return encoded.reindex(columns=self.feature_columns_, fill_value=0.0)
 
     def fit(self, features: pd.DataFrame, delta: np.ndarray, meta: pd.DataFrame) -> "SklearnDeltaCalibrator":
         del meta
@@ -264,7 +270,7 @@ def _load_samples(
     model_name: str,
     split: str,
     windows_path: Path,
-    detector: RupturesPeltDetector,
+    detector: Any,
 ) -> list[WindowSample]:
     samples: list[WindowSample] = []
 
@@ -284,8 +290,8 @@ def _load_samples(
                 f"Window artifact mismatch for ({row.series}, start={row.start_index})."
             )
 
-        tau_pred = resolve_tau(detector.detect_first_change_point(y50), horizon)
-        tau_true = resolve_tau(detector.detect_first_change_point(future_true), horizon)
+        tau_pred = resolve_tau(detector.detect_change_point(y50).tau, horizon)
+        tau_true = resolve_tau(detector.detect_change_point(future_true).tau, horizon)
         safe_ceiling_raw = safe_ceiling_from_tau(y95, tau_pred, horizon)
 
         samples.append(
@@ -433,16 +439,16 @@ def _make_calibrators(random_seed: int) -> dict[str, Any]:
         "per_series_median_offset": PerSeriesMedianOffsetCalibrator(),
         "random_forest": SklearnDeltaCalibrator(
             RandomForestRegressor(
-                n_estimators=300,
-                min_samples_leaf=3,
+                n_estimators=100,
+                min_samples_leaf=5,
                 random_state=random_seed,
                 n_jobs=-1,
             )
         ),
         "extra_trees": SklearnDeltaCalibrator(
             ExtraTreesRegressor(
-                n_estimators=400,
-                min_samples_leaf=2,
+                n_estimators=100,
+                min_samples_leaf=5,
                 random_state=random_seed,
                 n_jobs=-1,
             )
@@ -450,8 +456,8 @@ def _make_calibrators(random_seed: int) -> dict[str, Any]:
         "gradient_boosting": SklearnDeltaCalibrator(
             GradientBoostingRegressor(
                 random_state=random_seed,
-                n_estimators=300,
-                learning_rate=0.03,
+                n_estimators=100,
+                learning_rate=0.05,
                 max_depth=3,
                 subsample=0.8,
             )
@@ -530,7 +536,7 @@ def parse_args() -> argparse.Namespace:
             "Train and evaluate post-hoc tau calibration models over saved forecast windows."
         )
     )
-    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
     parser.add_argument("--timestamp-col", default=DEFAULT_TIMESTAMP_COL)
     parser.add_argument("--data-path", type=Path, default=DEFAULT_DATASET_PATH)
     parser.add_argument("--forecast-dir", type=Path, required=True)
@@ -541,6 +547,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--tolerance", type=int, default=DEFAULT_TOLERANCE)
     parser.add_argument("--coverage-target", type=float, default=0.95)
+    parser.add_argument("--cp-config-manifest", type=Path, default=None)
+    parser.add_argument("--cp-detector", default=None)
+    parser.add_argument("--cp-period-length", default=DEFAULT_CP_PERIOD_LENGTH)
+    parser.add_argument("--cp-exclusion-radius", type=float, default=DEFAULT_CP_EXCLUSION_RADIUS)
+    parser.add_argument("--cp-score-threshold", type=float, default=DEFAULT_CP_SCORE_THRESHOLD)
     parser.add_argument("--cp-model", default=DEFAULT_CP_MODEL)
     parser.add_argument("--cp-penalty", type=float, default=DEFAULT_CP_PENALTY)
     parser.add_argument("--cp-min-size", type=int, default=DEFAULT_CP_MIN_SIZE)
@@ -549,30 +560,188 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def _copy_existing_windows(
+    *,
+    source_windows: Path,
+    source_metrics: Path,
+    target_windows: Path,
+    target_metrics: Path,
+) -> None:
+    target_windows.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_windows, target_windows)
+    if source_metrics.exists():
+        shutil.copy2(source_metrics, target_metrics)
+
+
+def _materialize_forecast_cache(
+    *,
+    forecast_dir: Path,
+    output_dir: Path,
+    model_names: list[str],
+) -> Path:
+    cache_root = output_dir / "forecast_cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = forecast_dir.parent / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Missing manifest for calibration cache: {manifest_path}")
+    manifest = load_manifest(manifest_path)
+    full_df = load_wide_dataframe(manifest.dataset_path, manifest.timestamp_col)
+    forecast_summary = _read_json_if_exists(forecast_dir / "forecast_eval_summary.json") or {}
+    device = resolve_device_name(str(forecast_summary.get("device", AUTO_DEVICE)))
+    chronos_model_id = str(forecast_summary.get("chronos_model_id", "amazon/chronos-2"))
+    chronos_num_samples = int(forecast_summary.get("chronos_num_samples", 100))
+    deepar_num_samples = int(forecast_summary.get("deepar_num_samples", DEFAULT_DEEPAR_NUM_SAMPLES))
+    policy = forecast_summary.get("window_policy", {}) if isinstance(forecast_summary, dict) else {}
+    max_windows_per_series = policy.get("max_windows_per_series")
+
+    for split_name in ("train", "val", "test"):
+        split_dir = cache_root / split_name
+        split_dir.mkdir(parents=True, exist_ok=True)
+        starts_map = build_canonical_eval_starts_map(
+            manifest=manifest,
+            split=split_name,
+            max_windows_per_series=max_windows_per_series,
+        )
+        (split_dir / "window_policy.json").write_text(
+            json.dumps(
+                {
+                    "split": split_name,
+                    **canonical_window_policy(
+                        manifest,
+                        max_windows_per_series=max_windows_per_series,
+                    ),
+                    "starts_by_series": starts_map,
+                },
+                indent=2,
+            )
+        )
+
+        for model_name in model_names:
+            target_windows = split_dir / f"{model_name}_forecast_windows.csv"
+            target_metrics = split_dir / f"{model_name}_forecast_metrics.json"
+            source_windows = forecast_dir / split_name / f"{model_name}_forecast_windows.csv"
+            source_metrics = forecast_dir / split_name / f"{model_name}_forecast_metrics.json"
+            if source_windows.exists():
+                _copy_existing_windows(
+                    source_windows=source_windows,
+                    source_metrics=source_metrics,
+                    target_windows=target_windows,
+                    target_metrics=target_metrics,
+                )
+                continue
+
+            checkpoint_path = None
+            if model_name not in {"chronos2", "seasonal_naive"}:
+                checkpoint_path = (
+                    forecast_dir.parent
+                    / "checkpoints"
+                    / f"{model_name}_{manifest.dataset_name}_best.pt"
+                )
+            forecaster = build_forecaster(
+                model_name,
+                checkpoint_path=checkpoint_path,
+                context_length=manifest.context_length,
+                forecast_length=manifest.horizon,
+                quantiles=manifest.quantiles,
+                chronos_model_id=chronos_model_id,
+                chronos_num_samples=chronos_num_samples,
+                seasonal_period=daily_seasonal_period(manifest.cadence),
+                deepar_num_samples=deepar_num_samples,
+                device=device,
+            )
+            rows, metrics = evaluate_forecaster_on_split(
+                df=full_df,
+                manifest=manifest,
+                split=split_name,
+                model_name=model_name,
+                forecaster=forecaster,
+                device=device,
+                starts_map=starts_map,
+                max_windows_per_series=max_windows_per_series,
+                progress_label=f"tau_calibration:forecast_cache:{split_name}:{model_name}",
+            )
+            pd.DataFrame(rows).to_csv(target_windows, index=False)
+            target_metrics.write_text(json.dumps(metrics, indent=2))
+
+    return cache_root
+
+
 def main() -> None:
     args = parse_args()
     model_names = _parse_models(args.models)
     output_dir = args.output_dir or args.forecast_dir.parent / "tau_calibration"
     output_dir.mkdir(parents=True, exist_ok=True)
+    forecast_cache_dir = _materialize_forecast_cache(
+        forecast_dir=args.forecast_dir,
+        output_dir=output_dir,
+        model_names=model_names,
+    )
 
     full_df = pd.read_csv(args.data_path)
     full_df[args.timestamp_col] = pd.to_datetime(full_df[args.timestamp_col], utc=False)
     series_stats = _series_static_features(full_df, args.timestamp_col)
-    detector = RupturesPeltDetector(
-        model=args.cp_model,
-        penalty=args.cp_penalty,
-        min_size=args.cp_min_size,
-        jump=args.cp_jump,
+    manifest_configs = (
+        load_best_cp_configs(args.cp_config_manifest)
+        if args.cp_config_manifest is not None
+        else {}
+    )
+    fallback_config = default_cp_config(
+        cp_detector=args.cp_detector,
+        cp_model=args.cp_model,
+        cp_penalty=args.cp_penalty,
+        cp_min_size=args.cp_min_size,
+        cp_jump=args.cp_jump,
+        cp_period_length=args.cp_period_length,
+        cp_exclusion_radius=args.cp_exclusion_radius,
+        cp_score_threshold=args.cp_score_threshold,
     )
 
     summary_rows: list[dict[str, Any]] = []
     prediction_rows: list[dict[str, Any]] = []
     feature_importance_rows: list[dict[str, Any]] = []
 
+    n_calibrators = len(_make_calibrators(random_seed=0))
+    progress = StageProgressDisplay(
+        "tau_calibration",
+        len(model_names) * n_calibrators,
+        unit="calibrator",
+    )
+    progress.write(
+        f"[tau_calibration] starting models={len(model_names)} calibrators_per_model={n_calibrators}"
+    )
+
     for model_name in model_names:
+        detector_config = dict(manifest_configs.get(model_name, fallback_config))
+        detector = build_change_point_detector(
+            cp_detector=str(detector_config.get("cp_detector", fallback_config["cp_detector"])),
+            cp_period_length=detector_config.get("cp_period_length", fallback_config["cp_period_length"]),
+            cp_exclusion_radius=float(
+                detector_config.get(
+                    "cp_exclusion_radius",
+                    fallback_config["cp_exclusion_radius"],
+                )
+            ),
+            cp_score_threshold=float(
+                detector_config.get(
+                    "cp_score_threshold",
+                    fallback_config["cp_score_threshold"],
+                )
+            ),
+            cp_model=str(detector_config.get("cp_model", fallback_config["cp_model"])),
+            cp_penalty=float(detector_config.get("cp_penalty", fallback_config["cp_penalty"])),
+            cp_min_size=int(detector_config.get("cp_min_size", fallback_config["cp_min_size"])),
+            cp_jump=int(detector_config.get("cp_jump", fallback_config["cp_jump"])),
+        )
         samples: list[WindowSample] = []
         for split_name in ("train", "val", "test"):
-            windows_path = args.forecast_dir / split_name / f"{model_name}_forecast_windows.csv"
+            windows_path = forecast_cache_dir / split_name / f"{model_name}_forecast_windows.csv"
             if not windows_path.exists():
                 raise FileNotFoundError(f"Missing windows file: {windows_path}")
             samples.extend(
@@ -583,6 +752,7 @@ def main() -> None:
                     detector=detector,
                 )
             )
+        progress.write(f"[tau_calibration:{model_name}] loaded {len(samples)} windows (train/val/test)")
 
         features_df = _build_feature_table(samples, series_stats)
         split = features_df["split"].astype(str)
@@ -611,6 +781,8 @@ def main() -> None:
             not in {
                 "model",
                 "split",
+                "series",
+                "start_index",
                 "tau_true",
                 "delta_true",
             }
@@ -656,10 +828,18 @@ def main() -> None:
                     "model": model_name,
                     "calibrator": calibrator_name,
                     "split": split_name,
-                    "cp_model": args.cp_model,
-                    "cp_penalty": float(args.cp_penalty),
-                    "cp_min_size": int(args.cp_min_size),
-                    "cp_jump": int(args.cp_jump),
+                    "cp_detector": detector_config.get("cp_detector"),
+                    "cp_model": detector_config.get("cp_model"),
+                    "cp_penalty": float(detector_config.get("cp_penalty", float("nan"))),
+                    "cp_min_size": int(detector_config.get("cp_min_size", DEFAULT_CP_MIN_SIZE)),
+                    "cp_jump": int(detector_config.get("cp_jump", DEFAULT_CP_JUMP)),
+                    "cp_period_length": detector_config.get("cp_period_length"),
+                    "cp_exclusion_radius": float(
+                        detector_config.get("cp_exclusion_radius", DEFAULT_CP_EXCLUSION_RADIUS)
+                    ),
+                    "cp_score_threshold": float(
+                        detector_config.get("cp_score_threshold", DEFAULT_CP_SCORE_THRESHOLD)
+                    ),
                     "num_windows": int(np.sum(mask)),
                     **metrics,
                 }
@@ -684,6 +864,24 @@ def main() -> None:
                             "tau_corrected": int(tau_hat),
                         }
                     )
+
+            val_row = next(
+                (
+                    r
+                    for r in reversed(summary_rows)
+                    if r["model"] == model_name
+                    and r["calibrator"] == calibrator_name
+                    and r["split"] == "val"
+                ),
+                None,
+            )
+            progress.advance(
+                1,
+                phase="eval",
+                model=model_name,
+                calibrator=calibrator_name,
+                val_mae_cp=val_row["MAE_CP"] if val_row else None,
+            )
 
         summary_df = pd.DataFrame(summary_rows)
         raw_test = summary_df[
@@ -770,16 +968,13 @@ def main() -> None:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "data_path": str(args.data_path),
         "forecast_dir": str(args.forecast_dir),
+        "forecast_cache_dir": str(forecast_cache_dir),
         "output_dir": str(output_dir),
         "models": model_names,
         "tolerance": int(args.tolerance),
         "coverage_target": float(args.coverage_target),
-        "cp_detector": {
-            "model": args.cp_model,
-            "penalty": float(args.cp_penalty),
-            "min_size": int(args.cp_min_size),
-            "jump": int(args.cp_jump),
-        },
+        "cp_config_manifest": str(args.cp_config_manifest) if args.cp_config_manifest else None,
+        "cp_detector": fallback_config,
         "summary_csv": str(summary_path),
         "best_test_rows_csv": str(best_path),
         "test_predictions_csv": str(predictions_path),
@@ -789,12 +984,13 @@ def main() -> None:
     manifest_path = output_dir / "tau_calibration_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
-    print(f"Saved summary: {summary_path}")
-    print(f"Saved best test rows: {best_path}")
-    print(f"Saved predictions: {predictions_path}")
-    print(f"Saved test predictions: {test_predictions_path}")
-    print(f"Saved feature importances: {feature_importances_path}")
-    print(f"Saved manifest: {manifest_path}")
+    progress.write(f"Saved summary: {summary_path}")
+    progress.write(f"Saved best test rows: {best_path}")
+    progress.write(f"Saved predictions: {predictions_path}")
+    progress.write(f"Saved test predictions: {test_predictions_path}")
+    progress.write(f"Saved feature importances: {feature_importances_path}")
+    progress.write(f"Saved manifest: {manifest_path}")
+    progress.close()
 
 
 if __name__ == "__main__":

@@ -14,24 +14,53 @@ def resolve_tau(tau: int | None, horizon: int) -> int:
     return int(np.clip(int(tau), 0, horizon))
 
 
-def extract_pre_change_interval(values: np.ndarray, tau: int, horizon: int) -> np.ndarray:
+def extract_pre_change_interval(values: np.ndarray, tau: int | None, horizon: int) -> np.ndarray:
     arr = np.asarray(values, dtype=float).reshape(-1)
-    if tau >= horizon:
+    resolved_tau = resolve_tau(tau, horizon)
+    if resolved_tau >= horizon:
         segment = arr[:horizon]
     else:
-        segment = arr[: max(1, tau)]
+        segment = arr[: max(1, resolved_tau)]
     if segment.size == 0:
         return arr[:1]
     return segment
 
 
-def safe_ceiling_from_tau(y95: np.ndarray, tau_pred: int, horizon: int) -> float:
+def safe_ceiling_from_tau(y95: np.ndarray, tau_pred: int | None, horizon: int) -> float:
     arr = np.asarray(y95, dtype=float).reshape(-1)
-    if tau_pred >= horizon:
+    resolved_tau = resolve_tau(tau_pred, horizon)
+    if resolved_tau >= horizon:
         stationary_95 = arr[:horizon]
     else:
-        stationary_95 = arr[: max(1, tau_pred)]
+        stationary_95 = arr[: max(1, resolved_tau)]
     return float(np.max(stationary_95))
+
+
+def binary_classification_metrics(
+    truth: Sequence[bool],
+    pred: Sequence[bool],
+) -> dict[str, float]:
+    truth_arr = np.asarray(truth, dtype=bool).reshape(-1)
+    pred_arr = np.asarray(pred, dtype=bool).reshape(-1)
+    if truth_arr.shape != pred_arr.shape:
+        raise ValueError("truth and pred must have matching shapes.")
+    tp = int(np.sum(truth_arr & pred_arr))
+    fp = int(np.sum(~truth_arr & pred_arr))
+    fn = int(np.sum(truth_arr & ~pred_arr))
+    precision = float(tp / (tp + fp)) if (tp + fp) else 0.0
+    recall = float(tp / (tp + fn)) if (tp + fn) else 0.0
+    if precision + recall == 0.0:
+        f1 = 0.0
+    else:
+        f1 = float(2.0 * precision * recall / (precision + recall))
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "tp": float(tp),
+        "fp": float(fp),
+        "fn": float(fn),
+    }
 
 
 def pinball_loss(target: np.ndarray, pred: np.ndarray, quantile: float) -> float:
@@ -50,8 +79,8 @@ def json_array(raw: str) -> np.ndarray:
 
 
 def clamp_upper_quantile(y50: Sequence[float], y95: Sequence[float]) -> np.ndarray:
-    median = np.asarray(y50, dtype=float).reshape(-1)
-    upper = np.asarray(y95, dtype=float).reshape(-1)
+    median = np.asarray(y50, dtype=float)
+    upper = np.asarray(y95, dtype=float)
     if median.shape != upper.shape:
         raise ValueError("q50 and q95 must have matching shapes.")
     return np.maximum(upper, median)

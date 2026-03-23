@@ -16,6 +16,7 @@ if __package__ in {None, ""}:
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from src.progress import StageProgressDisplay
 from src.system_metrics import (
     clamp_upper_quantile,
     extract_pre_change_interval,
@@ -38,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forecast-dir", type=Path, required=True)
     parser.add_argument("--tau-calibration-dir", type=Path, required=True)
     parser.add_argument("--raw-system-eval-dir", type=Path, default=None)
-    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
     parser.add_argument("--splits", default="test")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--selection-rule", default="best_val_mae_cp")
@@ -88,6 +89,17 @@ def main() -> None:
     predictions_df = pd.read_csv(predictions_path)
     selected_calibrators = _select_calibrators(best_rows, args.selection_rule)
 
+    splits = _parse_csv(args.splits)
+    model_names = _parse_csv(args.models)
+    progress = StageProgressDisplay(
+        "calibrated_system_eval",
+        len(splits) * len(model_names),
+        unit="model",
+    )
+    progress.write(
+        f"[calibrated_system_eval] starting splits={splits} models={len(model_names)} rule={args.selection_rule}"
+    )
+
     summary: dict[str, Any] = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "forecast_dir": str(forecast_dir),
@@ -98,12 +110,12 @@ def main() -> None:
     }
     comparison_rows: list[dict[str, Any]] = []
 
-    for split in _parse_csv(args.splits):
+    for split in splits:
         split_dir = output_dir / split
         split_dir.mkdir(parents=True, exist_ok=True)
         split_summary: dict[str, Any] = {}
 
-        for model_name in _parse_csv(args.models):
+        for model_name in model_names:
             selected_calibrator = selected_calibrators.get(model_name)
             if selected_calibrator is None:
                 continue
@@ -240,9 +252,13 @@ def main() -> None:
                 "metrics_path": str(model_metrics_path),
                 "selected_calibrator": selected_calibrator,
             }
-            print(
-                f"[calibrated_system_eval:{split}:{model_name}] "
-                f"calibrator={selected_calibrator} MAE_CP={calibrated_metrics['MAE_CP']:.4f}"
+            progress.advance(
+                1,
+                phase="eval",
+                split=split,
+                model=model_name,
+                calibrator=selected_calibrator,
+                mae_cp=calibrated_metrics["MAE_CP"],
             )
 
         summary["splits"][split] = split_summary
@@ -254,8 +270,9 @@ def main() -> None:
 
     summary_path = output_dir / "calibrated_system_eval_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
-    print(f"Saved calibrated system summary: {summary_path}")
-    print(f"Saved calibrated system comparison: {comparison_path}")
+    progress.write(f"Saved calibrated system summary: {summary_path}")
+    progress.write(f"Saved calibrated system comparison: {comparison_path}")
+    progress.close()
 
 
 if __name__ == "__main__":

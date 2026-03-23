@@ -11,8 +11,15 @@ import numpy as np
 import torch
 
 from src.config import DEFAULT_DATASET_PATH, DEFAULT_QUANTILES, DEFAULT_SEASONAL_NAIVE_PERIOD
+from src.deepar_support import (
+    build_series_item_index,
+    build_time_feature_matrix,
+    feature_spec_from_payload,
+)
 from src.device import AUTO_DEVICE, resolve_torch_device
-from src.models import DeepARForecast, LSTMForecast, TFTForecast
+from src.experiment import load_wide_dataframe
+from src.models import DeepARForecast, LSTMForecast, LegacyDeepARForecast, TFTForecast
+from src.tft_support import build_tft_time_feature_matrix
 from src.change_detection import ChangePointDetector, RupturesPeltDetector
 
 Z95 = 1.6448536269514722
@@ -22,6 +29,34 @@ Z95 = 1.6448536269514722
 class ProbabilisticForecast:
     y_pred_median: np.ndarray
     y_pred_95: np.ndarray
+
+
+@dataclass
+class ProbabilisticForecastBatch:
+    y_pred_median: np.ndarray
+    y_pred_95: np.ndarray
+
+
+@dataclass
+class DeepARInferenceSupport:
+    dataset_path: str
+    timestamp_col: str
+    cadence: str
+    series_columns: tuple[str, ...]
+    series_to_item_id: dict[str, int]
+    time_feature_matrix: np.ndarray
+    num_samples: int
+    random_seed: int
+
+
+@dataclass
+class TFTInferenceSupport:
+    dataset_path: str
+    timestamp_col: str
+    cadence: str
+    series_columns: tuple[str, ...]
+    series_to_item_id: dict[str, int]
+    time_feature_matrix: np.ndarray
 
 
 @dataclass
@@ -46,11 +81,497 @@ class Forecaster(ABC):
         self,
         history: np.ndarray | list[float],
         horizon: int,
+        **kwargs: Any,
     ) -> ProbabilisticForecast:
         """Return q50 and q95 trajectories."""
 
+    def predict_quantiles_batch(
+        self,
+        histories: np.ndarray | Sequence[np.ndarray] | Sequence[list[float]],
+        horizon: int,
+        **kwargs: Any,
+    ) -> ProbabilisticForecastBatch:
+        histories_arr = _normalize_history_batch(histories)
+        series_names = kwargs.get("series_names")
+        start_indices = kwargs.get("start_indices")
+        forecasts = []
+        for row_idx, history in enumerate(histories_arr):
+            row_kwargs: dict[str, Any] = {}
+            if series_names is not None:
+                row_kwargs["series_name"] = series_names[row_idx]
+            if start_indices is not None:
+                row_kwargs["start_index"] = start_indices[row_idx]
+            forecasts.append(self.predict_quantiles(history=history, horizon=horizon, **row_kwargs))
+        if not forecasts:
+            empty = np.empty((0, int(horizon)), dtype=float)
+            return ProbabilisticForecastBatch(y_pred_median=empty, y_pred_95=empty.copy())
+        return ProbabilisticForecastBatch(
+            y_pred_median=np.stack([forecast.y_pred_median for forecast in forecasts], axis=0),
+            y_pred_95=np.stack([forecast.y_pred_95 for forecast in forecasts], axis=0),
+        )
 
-class TorchCheckpointForecaster(Forecaster):
+
+def _normalize_history_batch(
+    histories: np.ndarray | Sequence[np.ndarray] | Sequence[list[float]],
+) -> np.ndarray:
+    if isinstance(histories, np.ndarray):
+        arr = np.asarray(histories, dtype=float)
+        if arr.ndim == 1:
+            return arr.reshape(1, -1)
+        if arr.ndim == 2:
+            return arr
+        raise ValueError("Expected histories with shape (seq,) or (batch, seq).")
+
+    rows = [np.asarray(history, dtype=float).reshape(-1) for history in histories]
+    if not rows:
+        return np.empty((0, 0), dtype=float)
+    widths = {row.size for row in rows}
+    if len(widths) != 1:
+        raise ValueError("All batched histories must have the same length.")
+    return np.stack(rows, axis=0)
+
+
+def _slice_with_left_padding(
+    matrix: np.ndarray,
+    *,
+    start: int,
+    end: int,
+    width: int,
+) -> np.ndarray:
+    slice_start = max(0, int(start))
+    slice_end = max(slice_start, int(end))
+    values = np.asarray(matrix[slice_start:slice_end], dtype=float)
+    if values.shape[0] >= width:
+        return values[-width:]
+    padded = np.zeros((int(width), values.shape[1]), dtype=float)
+    padded[-values.shape[0] :] = values
+    return padded
+
+
+def _build_deepar_inference_support(
+    model_config: dict[str, Any],
+    *,
+    num_samples_override: int | None = None,
+) -> DeepARInferenceSupport | None:
+    payload = dict(model_config or {})
+    if payload.get("model_type") != "deepar":
+        return None
+    feature_spec = feature_spec_from_payload(payload.get("deepar_feature_spec"))
+    if feature_spec is None:
+        return None
+    dataset_path = str(payload["dataset_path"])
+    timestamp_col = str(payload["timestamp_col"])
+    cadence = str(payload["cadence"])
+    series_columns = tuple(str(name) for name in payload.get("series_columns", ()))
+    df = load_wide_dataframe(dataset_path, timestamp_col=timestamp_col)
+    time_feature_matrix = build_time_feature_matrix(
+        df[timestamp_col],
+        cadence=cadence,
+        feature_spec=feature_spec,
+    )
+    return DeepARInferenceSupport(
+        dataset_path=dataset_path,
+        timestamp_col=timestamp_col,
+        cadence=cadence,
+        series_columns=series_columns,
+        series_to_item_id=build_series_item_index(series_columns),
+        time_feature_matrix=np.asarray(time_feature_matrix, dtype=float),
+        num_samples=int(
+            num_samples_override
+            if num_samples_override is not None
+            else payload.get("deepar_num_samples", 200)
+        ),
+        random_seed=int(payload.get("deepar_random_seed", 42)),
+    )
+
+
+def _build_tft_inference_support(
+    model_config: dict[str, Any],
+) -> TFTInferenceSupport | None:
+    payload = dict(model_config or {})
+    if payload.get("model_type") != "tft":
+        return None
+    feature_spec = feature_spec_from_payload(payload.get("tft_known_feature_spec"))
+    if feature_spec is None:
+        return None
+    dataset_path = str(payload["dataset_path"])
+    timestamp_col = str(payload["timestamp_col"])
+    cadence = str(payload["cadence"])
+    series_columns = tuple(str(name) for name in payload.get("series_columns", ()))
+    df = load_wide_dataframe(dataset_path, timestamp_col=timestamp_col)
+    time_feature_matrix = build_tft_time_feature_matrix(
+        df[timestamp_col],
+        cadence=cadence,
+        feature_spec=feature_spec,
+    )
+    return TFTInferenceSupport(
+        dataset_path=dataset_path,
+        timestamp_col=timestamp_col,
+        cadence=cadence,
+        series_columns=series_columns,
+        series_to_item_id=build_series_item_index(series_columns),
+        time_feature_matrix=np.asarray(time_feature_matrix, dtype=float),
+    )
+
+
+class _TorchProbabilisticMixin:
+    @staticmethod
+    def _extract_quantile_path(
+        quantile_preds: np.ndarray,
+        quantile_levels: Sequence[float],
+        target_q: float,
+    ) -> np.ndarray:
+        if quantile_preds.ndim != 2:
+            raise ValueError("quantile_preds must have shape (horizon, num_quantiles).")
+        levels = np.asarray(list(quantile_levels), dtype=float)
+        if levels.size != quantile_preds.shape[1]:
+            raise ValueError("quantile levels size does not match prediction dimension.")
+
+        order = np.argsort(levels)
+        levels = levels[order]
+        preds = quantile_preds[:, order]
+
+        if target_q <= levels[0]:
+            return preds[:, 0]
+        if target_q >= levels[-1]:
+            return preds[:, -1]
+
+        return np.asarray(
+            [np.interp(target_q, levels, row) for row in preds],
+            dtype=float,
+        )
+
+    def _extract_quantile_batch(
+        self,
+        quantile_preds: np.ndarray,
+        quantile_levels: Sequence[float],
+        target_q: float,
+    ) -> np.ndarray:
+        preds = np.asarray(quantile_preds, dtype=float)
+        if preds.ndim != 3:
+            raise ValueError(
+                "quantile_preds must have shape (batch, horizon, num_quantiles)."
+            )
+        return np.stack(
+            [
+                self._extract_quantile_path(sample_preds, quantile_levels, target_q)
+                for sample_preds in preds
+            ],
+            axis=0,
+        )
+
+    def _predict_block_batch(
+        self,
+        context_batch: np.ndarray,
+        *,
+        series_names: Sequence[str] | None = None,
+        start_indices: Sequence[int] | None = None,
+    ) -> ProbabilisticForecastBatch:
+        contexts = _normalize_history_batch(context_batch)
+        context_tensor = torch.tensor(contexts, dtype=torch.float32, device=self.device)
+
+        with torch.no_grad():
+            if self.model_type == "deepar":
+                if self.deepar_support is None or start_indices is None or series_names is None:
+                    context_time = np.zeros(
+                        (contexts.shape[0], self.context_length, self.model.num_time_features),
+                        dtype=float,
+                    )
+                    future_time = np.zeros(
+                        (contexts.shape[0], self.forecast_length, self.model.num_time_features),
+                        dtype=float,
+                    )
+                    item_ids = np.zeros(contexts.shape[0], dtype=int)
+                else:
+                    context_rows = []
+                    future_rows = []
+                    item_ids = []
+                    for series_name, start_idx in zip(series_names, start_indices):
+                        start_idx = int(start_idx)
+                        context_rows.append(
+                            _slice_with_left_padding(
+                                self.deepar_support.time_feature_matrix,
+                                start=start_idx - self.context_length,
+                                end=start_idx,
+                                width=self.context_length,
+                            )
+                        )
+                        future_rows.append(
+                            _slice_with_left_padding(
+                                self.deepar_support.time_feature_matrix,
+                                start=start_idx,
+                                end=start_idx + self.forecast_length,
+                                width=self.forecast_length,
+                            )
+                        )
+                        item_ids.append(self.deepar_support.series_to_item_id[str(series_name)])
+                    context_time = np.stack(context_rows, axis=0)
+                    future_time = np.stack(future_rows, axis=0)
+
+                draws = self.model.sample_forecasts(
+                    context=context_tensor,
+                    context_time_features=torch.tensor(
+                        context_time, dtype=torch.float32, device=self.device
+                    ),
+                    future_time_features=torch.tensor(
+                        future_time, dtype=torch.float32, device=self.device
+                    ),
+                    item_ids=torch.tensor(item_ids, dtype=torch.long, device=self.device),
+                    num_samples=(
+                        self.deepar_support.num_samples
+                        if self.deepar_support is not None
+                        else 200
+                    ),
+                    random_seed=(
+                        self.deepar_support.random_seed if self.deepar_support is not None else 42
+                    ),
+                )
+                y50 = torch.quantile(draws, 0.5, dim=1).detach().cpu().numpy().astype(float)
+                y95 = torch.quantile(draws, 0.95, dim=1).detach().cpu().numpy().astype(float)
+            elif self.model_type == "tft":
+                if self.tft_support is None or start_indices is None or series_names is None:
+                    context_known = np.zeros(
+                        (
+                            contexts.shape[0],
+                            self.context_length,
+                            max(0, int(self.model_config.get("tft_num_known_features", 0))),
+                        ),
+                        dtype=float,
+                    )
+                    future_known = np.zeros(
+                        (
+                            contexts.shape[0],
+                            self.forecast_length,
+                            max(1, int(self.model_config.get("tft_num_future_features", 0))),
+                        ),
+                        dtype=float,
+                    )
+                    static_categorical = np.zeros((contexts.shape[0], 1), dtype=int)
+                else:
+                    context_rows = []
+                    future_rows = []
+                    item_ids = []
+                    for series_name, start_idx in zip(series_names, start_indices):
+                        start_idx = int(start_idx)
+                        context_rows.append(
+                            _slice_with_left_padding(
+                                self.tft_support.time_feature_matrix,
+                                start=start_idx - self.context_length,
+                                end=start_idx,
+                                width=self.context_length,
+                            )
+                        )
+                        future_rows.append(
+                            _slice_with_left_padding(
+                                self.tft_support.time_feature_matrix,
+                                start=start_idx,
+                                end=start_idx + self.forecast_length,
+                                width=self.forecast_length,
+                            )
+                        )
+                        item_ids.append(self.tft_support.series_to_item_id[str(series_name)])
+                    context_known = np.stack(context_rows, axis=0)
+                    future_known = np.stack(future_rows, axis=0)
+                    static_categorical = np.asarray(item_ids, dtype=int).reshape(-1, 1)
+
+                past_inputs = np.concatenate(
+                    [contexts[..., None], context_known],
+                    axis=-1,
+                )
+                outputs = self.model(
+                    torch.tensor(past_inputs, dtype=torch.float32, device=self.device),
+                    future_inputs=torch.tensor(
+                        future_known,
+                        dtype=torch.float32,
+                        device=self.device,
+                    ),
+                    static_categorical=torch.tensor(
+                        static_categorical,
+                        dtype=torch.long,
+                        device=self.device,
+                    ),
+                )
+                quantile_preds = outputs.detach().cpu().numpy().astype(float)
+                y50 = self._extract_quantile_batch(
+                    quantile_preds,
+                    self.output_quantiles,
+                    0.5,
+                )
+                max_trained_q = max(self.output_quantiles)
+                if 0.95 <= max_trained_q + 1e-8:
+                    y95 = self._extract_quantile_batch(
+                        quantile_preds,
+                        self.output_quantiles,
+                        0.95,
+                    )
+                elif self.enable_residual_fallback and self.residual_sigma is not None:
+                    y95 = y50 + Z95 * float(self.residual_sigma)
+                else:
+                    y95 = self._extract_quantile_batch(
+                        quantile_preds,
+                        self.output_quantiles,
+                        max_trained_q,
+                    )
+            else:
+                outputs = self.model(context_tensor)
+                quantile_preds = outputs.detach().cpu().numpy().astype(float)
+                y50 = self._extract_quantile_batch(
+                    quantile_preds,
+                    self.output_quantiles,
+                    0.5,
+                )
+                max_trained_q = max(self.output_quantiles)
+                if 0.95 <= max_trained_q + 1e-8:
+                    y95 = self._extract_quantile_batch(
+                        quantile_preds,
+                        self.output_quantiles,
+                        0.95,
+                    )
+                elif self.enable_residual_fallback and self.residual_sigma is not None:
+                    y95 = y50 + Z95 * float(self.residual_sigma)
+                else:
+                    y95 = self._extract_quantile_batch(
+                        quantile_preds,
+                        self.output_quantiles,
+                        max_trained_q,
+                    )
+
+        y50 = np.asarray(y50, dtype=float)
+        y95 = np.asarray(y95, dtype=float)
+        y95 = np.maximum(y95, y50)
+
+        if y50.size == 0 or y95.size == 0:
+            raise ValueError("Model returned an empty forecast block.")
+        if y50.size != y95.size:
+            raise ValueError("q50 and q95 block sizes do not match.")
+
+        return ProbabilisticForecastBatch(y_pred_median=y50, y_pred_95=y95)
+
+    def _predict_block(self, context: np.ndarray) -> ProbabilisticForecast:
+        batch = self._predict_block_batch(np.asarray(context, dtype=float).reshape(1, -1))
+        return ProbabilisticForecast(
+            y_pred_median=batch.y_pred_median[0],
+            y_pred_95=batch.y_pred_95[0],
+        )
+
+    def predict_quantiles(
+        self,
+        history: np.ndarray | list[float],
+        horizon: int,
+        **kwargs: Any,
+    ) -> ProbabilisticForecast:
+        batch = self.predict_quantiles_batch(
+            np.asarray(history, dtype=float).reshape(1, -1),
+            horizon,
+            series_names=[kwargs["series_name"]] if "series_name" in kwargs else None,
+            start_indices=[kwargs["start_index"]] if "start_index" in kwargs else None,
+        )
+        return ProbabilisticForecast(
+            y_pred_median=batch.y_pred_median[0],
+            y_pred_95=batch.y_pred_95[0],
+        )
+
+    def predict_quantiles_batch(
+        self,
+        histories: np.ndarray | Sequence[np.ndarray] | Sequence[list[float]],
+        horizon: int,
+        **kwargs: Any,
+    ) -> ProbabilisticForecastBatch:
+        histories_arr = _normalize_history_batch(histories)
+        if histories_arr.shape[1] < self.context_length:
+            raise ValueError(
+                f"History too short ({histories_arr.shape[1]}) for context_length={self.context_length}."
+            )
+        if horizon <= 0:
+            raise ValueError("horizon must be positive.")
+
+        generated_50: list[np.ndarray] = []
+        generated_95: list[np.ndarray] = []
+        rolling_history = histories_arr.copy()
+        remaining = int(horizon)
+        series_names = kwargs.get("series_names")
+        start_indices = kwargs.get("start_indices")
+
+        while remaining > 0:
+            contexts = rolling_history[:, -self.context_length :]
+            block = self._predict_block_batch(
+                contexts,
+                series_names=series_names,
+                start_indices=start_indices,
+            )
+
+            take = min(remaining, int(block.y_pred_median.shape[1]))
+            chunk_50 = block.y_pred_median[:, :take]
+            chunk_95 = block.y_pred_95[:, :take]
+
+            generated_50.append(chunk_50)
+            generated_95.append(chunk_95)
+            remaining -= take
+
+            if remaining > 0:
+                # Roll with central tendency trajectory for autoregressive extension.
+                rolling_history = np.concatenate([rolling_history, chunk_50], axis=1)
+
+        y50 = np.concatenate(generated_50, axis=1)
+        y95 = np.concatenate(generated_95, axis=1)
+        y95 = np.maximum(y95, y50)
+        return ProbabilisticForecastBatch(y_pred_median=y50, y_pred_95=y95)
+
+
+class TorchModelForecaster(_TorchProbabilisticMixin, Forecaster):
+    """Adapter for in-memory PyTorch baselines."""
+
+    def __init__(
+        self,
+        model_type: str,
+        model: torch.nn.Module,
+        *,
+        context_length: int = 128,
+        forecast_length: int | None = None,
+        quantiles: Sequence[float] = DEFAULT_QUANTILES,
+        output_quantiles: Sequence[float] | None = None,
+        residual_sigma: float | None = None,
+        enable_residual_fallback: bool = True,
+        model_config: dict[str, Any] | None = None,
+        deepar_num_samples: int | None = None,
+        device: str | torch.device = AUTO_DEVICE,
+    ) -> None:
+        self.model_type = model_type.lower()
+        if self.model_type not in {"lstm", "deepar", "tft"}:
+            raise ValueError("model_type must be one of: lstm, deepar, tft.")
+
+        self.context_length = int(context_length)
+        self.forecast_length = int(
+            forecast_length
+            if forecast_length is not None
+            else getattr(model, "forecast_length", 1)
+        )
+        self.input_quantiles = tuple(float(q) for q in quantiles)
+        if output_quantiles is None:
+            if self.model_type == "deepar":
+                self.output_quantiles = (0.5, 0.95)
+            else:
+                self.output_quantiles = tuple(
+                    float(q) for q in getattr(model, "quantiles", self.input_quantiles)
+                )
+        else:
+            self.output_quantiles = tuple(float(q) for q in output_quantiles)
+        self.residual_sigma = float(residual_sigma) if residual_sigma is not None else None
+        self.enable_residual_fallback = bool(enable_residual_fallback)
+        self.model_config = dict(model_config or {})
+        self.device = resolve_torch_device(device)
+        self.deepar_support = _build_deepar_inference_support(
+            self.model_config,
+            num_samples_override=deepar_num_samples,
+        )
+        self.tft_support = _build_tft_inference_support(self.model_config)
+        self._prediction_calls = 0
+        self.evaluation_batch_size = 64 if self.model_type == "deepar" else 256
+        self.model = model.to(self.device)
+        self.model.eval()
+
+
+class TorchCheckpointForecaster(TorchModelForecaster):
     """Adapter for saved PyTorch baselines in `results/models/*.pt`."""
 
     def __init__(
@@ -62,6 +583,7 @@ class TorchCheckpointForecaster(Forecaster):
         quantiles: Sequence[float] = DEFAULT_QUANTILES,
         residual_sigma: float | None = None,
         enable_residual_fallback: bool = True,
+        deepar_num_samples: int | None = None,
         device: str | torch.device = AUTO_DEVICE,
     ) -> None:
         self.model_type = model_type.lower()
@@ -75,11 +597,33 @@ class TorchCheckpointForecaster(Forecaster):
         self.enable_residual_fallback = bool(enable_residual_fallback)
         self.device = resolve_torch_device(device)
 
-        state_dict = torch.load(self.checkpoint_path, map_location="cpu")
+        checkpoint_payload = torch.load(self.checkpoint_path, map_location="cpu")
+        if isinstance(checkpoint_payload, dict) and "state_dict" in checkpoint_payload:
+            state_dict = checkpoint_payload["state_dict"]
+            self.model_config = dict(checkpoint_payload.get("model_config", {}))
+        else:
+            state_dict = checkpoint_payload
+            self.model_config = {}
+        if forecast_length is None and self.model_config.get("forecast_length") is not None:
+            forecast_length = int(self.model_config["forecast_length"])
+        if context_length == 128 and self.model_config.get("context_length") is not None:
+            context_length = int(self.model_config["context_length"])
+        self.context_length = int(context_length)
         self.forecast_length = self._resolve_forecast_length(state_dict, forecast_length)
         self.model, self.output_quantiles = self._build_model(state_dict)
-        self.model = self.model.to(self.device)
-        self.model.eval()
+        super().__init__(
+            model_type=self.model_type,
+            model=self.model,
+            context_length=self.context_length,
+            forecast_length=self.forecast_length,
+            quantiles=self.input_quantiles,
+            output_quantiles=self.output_quantiles,
+            residual_sigma=self.residual_sigma,
+            enable_residual_fallback=self.enable_residual_fallback,
+            model_config=self.model_config,
+            deepar_num_samples=deepar_num_samples,
+            device=self.device,
+        )
 
     def _resolve_forecast_length(
         self,
@@ -164,7 +708,7 @@ class TorchCheckpointForecaster(Forecaster):
             num_layers = self._infer_num_layers_from_keys(state_dict, "lstm")
         else:
             hidden_size = int(state_dict["encoder.weight_hh_l0"].shape[1])
-            input_size = int(state_dict["past_vsn.var_embeds.0.weight"].shape[1])
+            input_size = int(state_dict["past_vsn.var_projs.0.weight"].shape[1])
             num_layers = self._infer_num_layers_from_keys(state_dict, "encoder")
 
         output_quantiles: tuple[float, ...]
@@ -190,141 +734,70 @@ class TorchCheckpointForecaster(Forecaster):
             )
         elif self.model_type == "deepar":
             output_quantiles = (0.5, 0.95)
-            model = DeepARForecast(
-                context_length=self.context_length,
-                forecast_length=self.forecast_length,
-                input_size=input_size,
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-            )
+            if "item_embedding.weight" in state_dict:
+                feature_payload = self.model_config.get("deepar_feature_spec") or {}
+                inferred_embedding_dim = int(state_dict["item_embedding.weight"].shape[1])
+                inferred_time_features = max(1, input_size - 1 - inferred_embedding_dim)
+                num_time_features = len(feature_payload.get("feature_names", ())) or inferred_time_features
+                model = DeepARForecast(
+                    context_length=self.context_length,
+                    forecast_length=self.forecast_length,
+                    input_size=1,
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    num_time_features=max(1, int(num_time_features)),
+                    num_items=int(self.model_config.get("num_items", state_dict["item_embedding.weight"].shape[0])),
+                    item_embedding_dim=int(self.model_config.get("deepar_item_embedding_dim", inferred_embedding_dim)),
+                    likelihood=str(self.model_config.get("deepar_likelihood", "gaussian")),
+                )
+            else:
+                model = LegacyDeepARForecast(
+                    context_length=self.context_length,
+                    forecast_length=self.forecast_length,
+                    input_size=1,
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                )
         else:
             num_quantiles = int(state_dict["output_layer.weight"].shape[0])
             if len(self.input_quantiles) == num_quantiles:
                 output_quantiles = self.input_quantiles
             else:
                 output_quantiles = self._default_quantile_levels(num_quantiles)
+            tft_hidden_size = int(self.model_config.get("tft_hidden_size", hidden_size))
+            tft_num_heads = int(
+                self.model_config.get("tft_num_heads", self._infer_tft_num_heads(state_dict))
+            )
+            tft_num_lstm_layers = int(self.model_config.get("tft_num_lstm_layers", num_layers))
+            num_static_categorical = int(self.model_config.get("tft_num_static_categorical", 0))
+            static_cardinalities = tuple(
+                int(value)
+                for value in self.model_config.get("tft_static_categorical_cardinalities", [])
+            )
+            num_static_continuous = int(self.model_config.get("tft_num_static_continuous", 0))
+            num_past_features = int(self.model_config.get("tft_num_past_features", 1))
+            num_future_features = int(
+                self.model_config.get(
+                    "tft_num_future_features",
+                    self.model_config.get("tft_num_known_features", 0),
+                )
+            )
             model = TFTForecast(
                 context_length=self.context_length,
                 forecast_length=self.forecast_length,
-                input_size=input_size,
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                num_heads=self._infer_tft_num_heads(state_dict),
+                hidden_size=tft_hidden_size,
+                num_lstm_layers=tft_num_lstm_layers,
+                num_heads=tft_num_heads,
                 quantiles=output_quantiles,
+                num_static_categorical=num_static_categorical,
+                static_categorical_cardinalities=static_cardinalities,
+                num_static_continuous=num_static_continuous,
+                num_past_features=num_past_features,
+                num_future_features=num_future_features,
             )
 
         model.load_state_dict(state_dict)
         return model, output_quantiles
-
-    @staticmethod
-    def _extract_quantile_path(
-        quantile_preds: np.ndarray,
-        quantile_levels: Sequence[float],
-        target_q: float,
-    ) -> np.ndarray:
-        if quantile_preds.ndim != 2:
-            raise ValueError("quantile_preds must have shape (horizon, num_quantiles).")
-        levels = np.asarray(list(quantile_levels), dtype=float)
-        if levels.size != quantile_preds.shape[1]:
-            raise ValueError("quantile levels size does not match prediction dimension.")
-
-        order = np.argsort(levels)
-        levels = levels[order]
-        preds = quantile_preds[:, order]
-
-        if target_q <= levels[0]:
-            return preds[:, 0]
-        if target_q >= levels[-1]:
-            return preds[:, -1]
-
-        return np.asarray(
-            [np.interp(target_q, levels, row) for row in preds],
-            dtype=float,
-        )
-
-    def _predict_block(self, context: np.ndarray) -> ProbabilisticForecast:
-        context_tensor = (
-            torch.tensor(context, dtype=torch.float32, device=self.device).unsqueeze(0)
-        )
-
-        with torch.no_grad():
-            if self.model_type == "deepar":
-                outputs = self.model(context_tensor, targets=None, sample=False)
-                mu = outputs[0, :, 0].detach().cpu().numpy().astype(float)
-                sigma = outputs[0, :, 1].detach().cpu().numpy().astype(float)
-                y50 = mu
-                y95 = mu + Z95 * sigma
-            else:
-                outputs = self.model(context_tensor)
-                quantile_preds = outputs[0].detach().cpu().numpy().astype(float)
-                y50 = self._extract_quantile_path(quantile_preds, self.output_quantiles, 0.5)
-                max_trained_q = max(self.output_quantiles)
-                if 0.95 <= max_trained_q + 1e-8:
-                    y95 = self._extract_quantile_path(
-                        quantile_preds,
-                        self.output_quantiles,
-                        0.95,
-                    )
-                elif self.enable_residual_fallback and self.residual_sigma is not None:
-                    # Option B fallback when 0.95 is unavailable in checkpoint outputs.
-                    y95 = y50 + Z95 * float(self.residual_sigma)
-                else:
-                    y95 = self._extract_quantile_path(
-                        quantile_preds,
-                        self.output_quantiles,
-                        max_trained_q,
-                    )
-
-        y50 = np.asarray(y50, dtype=float).reshape(-1)
-        y95 = np.asarray(y95, dtype=float).reshape(-1)
-        y95 = np.maximum(y95, y50)
-
-        if y50.size == 0 or y95.size == 0:
-            raise ValueError("Model returned an empty forecast block.")
-        if y50.size != y95.size:
-            raise ValueError("q50 and q95 block sizes do not match.")
-
-        return ProbabilisticForecast(y_pred_median=y50, y_pred_95=y95)
-
-    def predict_quantiles(
-        self,
-        history: np.ndarray | list[float],
-        horizon: int,
-    ) -> ProbabilisticForecast:
-        history_arr = np.asarray(history, dtype=float).reshape(-1)
-        if history_arr.size < self.context_length:
-            raise ValueError(
-                f"History too short ({history_arr.size}) for context_length={self.context_length}."
-            )
-        if horizon <= 0:
-            raise ValueError("horizon must be positive.")
-
-        generated_50: list[np.ndarray] = []
-        generated_95: list[np.ndarray] = []
-        rolling_history = history_arr.copy()
-        remaining = int(horizon)
-
-        while remaining > 0:
-            context = rolling_history[-self.context_length :]
-            block = self._predict_block(context)
-
-            take = min(remaining, int(block.y_pred_median.size))
-            chunk_50 = block.y_pred_median[:take]
-            chunk_95 = block.y_pred_95[:take]
-
-            generated_50.append(chunk_50)
-            generated_95.append(chunk_95)
-            remaining -= take
-
-            if remaining > 0:
-                # Roll with central tendency trajectory for autoregressive extension.
-                rolling_history = np.concatenate([rolling_history, chunk_50])
-
-        y50 = np.concatenate(generated_50, axis=0)
-        y95 = np.concatenate(generated_95, axis=0)
-        y95 = np.maximum(y95, y50)
-        return ProbabilisticForecast(y_pred_median=y50, y_pred_95=y95)
-
 
 class Chronos2ZeroShotForecaster(Forecaster):
     """Adapter for Chronos2 zero-shot probabilistic forecasting."""
@@ -346,6 +819,7 @@ class Chronos2ZeroShotForecaster(Forecaster):
         # Kept only for backward compatibility with existing CLI args.
         # Chronos2 quantiles are extracted directly from model outputs.
         self.num_samples = int(num_samples)
+        self.evaluation_batch_size = 32
 
         self.pipeline = Chronos2Pipeline.from_pretrained(model_id)
         self.pipeline.model = self.pipeline.model.to(self.device)
@@ -360,6 +834,30 @@ class Chronos2ZeroShotForecaster(Forecaster):
         else:
             arr = np.asarray(forecast)
         return np.asarray(arr)
+
+    def _extract_batch_quantile_matrices(
+        self,
+        forecast: Any,
+        expected_num_quantiles: int | None,
+    ) -> list[np.ndarray]:
+        if isinstance(forecast, list):
+            return [
+                self._extract_quantile_matrix(
+                    self._extract_primary_array(item),
+                    expected_num_quantiles,
+                )
+                for item in forecast
+            ]
+
+        arr = self._extract_primary_array(forecast)
+        if arr.ndim == 2:
+            return [self._extract_quantile_matrix(arr, expected_num_quantiles)]
+        if arr.ndim != 3:
+            raise ValueError("Expected Chronos2 batch output with 2D/3D tensor.")
+        return [
+            self._extract_quantile_matrix(sample, expected_num_quantiles)
+            for sample in arr
+        ]
 
     @staticmethod
     def _resolve_quantile_indices(quantile_levels: Sequence[float] | None) -> tuple[int, int]:
@@ -418,33 +916,53 @@ class Chronos2ZeroShotForecaster(Forecaster):
         history: np.ndarray | list[float],
         horizon: int,
     ) -> ProbabilisticForecast:
-        history_arr = np.asarray(history, dtype=float).reshape(-1)
+        batch = self.predict_quantiles_batch(
+            np.asarray(history, dtype=float).reshape(1, -1),
+            horizon,
+        )
+        return ProbabilisticForecast(
+            y_pred_median=batch.y_pred_median[0],
+            y_pred_95=batch.y_pred_95[0],
+        )
+
+    def predict_quantiles_batch(
+        self,
+        histories: np.ndarray | Sequence[np.ndarray] | Sequence[list[float]],
+        horizon: int,
+        **kwargs: Any,
+    ) -> ProbabilisticForecastBatch:
+        histories_arr = _normalize_history_batch(histories)
         if horizon <= 0:
             raise ValueError("horizon must be positive.")
 
-        context = torch.tensor(history_arr, dtype=torch.float32)
+        contexts = [
+            torch.tensor(history, dtype=torch.float32)
+            for history in histories_arr
+        ]
         with torch.no_grad():
             forecast = self.pipeline.predict(
-                inputs=[context],
+                inputs=contexts,
                 prediction_length=horizon,
             )
 
-        arr = self._extract_primary_array(forecast)
         quantile_levels = getattr(self.pipeline, "quantiles", None)
         expected_num_quantiles = (
             len(quantile_levels)
             if quantile_levels is not None
             else None
         )
-        quantile_matrix = self._extract_quantile_matrix(arr, expected_num_quantiles)
         idx_50, idx_95 = self._resolve_quantile_indices(quantile_levels)
-        y50 = quantile_matrix[idx_50]
-        y95 = quantile_matrix[idx_95]
-
-        y50 = np.asarray(y50[:horizon], dtype=float)
-        y95 = np.asarray(y95[:horizon], dtype=float)
+        matrices = self._extract_batch_quantile_matrices(forecast, expected_num_quantiles)
+        y50 = np.stack(
+            [np.asarray(matrix[idx_50][:horizon], dtype=float) for matrix in matrices],
+            axis=0,
+        )
+        y95 = np.stack(
+            [np.asarray(matrix[idx_95][:horizon], dtype=float) for matrix in matrices],
+            axis=0,
+        )
         y95 = np.maximum(y95, y50)
-        return ProbabilisticForecast(y_pred_median=y50, y_pred_95=y95)
+        return ProbabilisticForecastBatch(y_pred_median=y50, y_pred_95=y95)
 
 
 class SeasonalNaiveForecaster(Forecaster):
@@ -455,6 +973,7 @@ class SeasonalNaiveForecaster(Forecaster):
         if season_length <= 0:
             raise ValueError("season_length must be positive.")
         self.season_length = season_length
+        self.evaluation_batch_size = 1024
 
     def _estimate_upper_margin(self, history: np.ndarray) -> float:
         if history.size > self.season_length:
@@ -475,26 +994,44 @@ class SeasonalNaiveForecaster(Forecaster):
         history: np.ndarray | list[float],
         horizon: int,
     ) -> ProbabilisticForecast:
-        history_arr = np.asarray(history, dtype=float).reshape(-1)
-        if history_arr.size == 0:
+        batch = self.predict_quantiles_batch(
+            np.asarray(history, dtype=float).reshape(1, -1),
+            horizon,
+        )
+        return ProbabilisticForecast(
+            y_pred_median=batch.y_pred_median[0],
+            y_pred_95=batch.y_pred_95[0],
+        )
+
+    def predict_quantiles_batch(
+        self,
+        histories: np.ndarray | Sequence[np.ndarray] | Sequence[list[float]],
+        horizon: int,
+        **kwargs: Any,
+    ) -> ProbabilisticForecastBatch:
+        histories_arr = _normalize_history_batch(histories)
+        if histories_arr.size == 0 or histories_arr.shape[1] == 0:
             raise ValueError("History must contain at least one value.")
         if horizon <= 0:
             raise ValueError("horizon must be positive.")
 
-        if history_arr.size < self.season_length:
-            y50 = np.repeat(float(history_arr[-1]), int(horizon)).astype(float)
+        if histories_arr.shape[1] < self.season_length:
+            y50 = np.repeat(histories_arr[:, -1:], int(horizon), axis=1).astype(float)
         else:
-            extended = history_arr.astype(float).tolist()
-            y50_values: list[float] = []
+            extended = histories_arr.astype(float)
+            y50_values: list[np.ndarray] = []
             for _ in range(int(horizon)):
-                pred = float(extended[-self.season_length])
-                y50_values.append(pred)
-                extended.append(pred)
-            y50 = np.asarray(y50_values, dtype=float)
+                pred = extended[:, -self.season_length]
+                y50_values.append(pred[:, None])
+                extended = np.concatenate([extended, pred[:, None]], axis=1)
+            y50 = np.concatenate(y50_values, axis=1).astype(float)
 
-        margin = self._estimate_upper_margin(history_arr)
+        margin = np.asarray(
+            [self._estimate_upper_margin(history) for history in histories_arr],
+            dtype=float,
+        )[:, None]
         y95 = np.maximum(y50 + margin, y50)
-        return ProbabilisticForecast(y_pred_median=y50, y_pred_95=y95)
+        return ProbabilisticForecastBatch(y_pred_median=y50, y_pred_95=y95)
 
 
 class HybridForecastingChangePointPipeline:
@@ -549,6 +1086,7 @@ def build_forecaster(
     chronos_model_id: str = "amazon/chronos-2",
     chronos_num_samples: int = 100,
     seasonal_period: int = DEFAULT_SEASONAL_NAIVE_PERIOD,
+    deepar_num_samples: int | None = None,
     device: str | torch.device = AUTO_DEVICE,
 ) -> Forecaster:
     """Factory for supported forecasters."""
@@ -564,6 +1102,7 @@ def build_forecaster(
             quantiles=quantiles,
             residual_sigma=residual_sigma,
             enable_residual_fallback=enable_residual_fallback,
+            deepar_num_samples=deepar_num_samples,
             device=device,
         )
     if name in {"chronos2", "chronos-2", "chronos2_zero_shot", "chronos2-zero-shot"}:
@@ -577,4 +1116,34 @@ def build_forecaster(
 
     raise ValueError(
         "Unsupported model_name. Expected one of: lstm, deepar, tft, chronos2, seasonal_naive."
+    )
+
+
+def build_model_forecaster(
+    model_name: str,
+    *,
+    model: torch.nn.Module,
+    context_length: int = 128,
+    forecast_length: int | None = None,
+    quantiles: Sequence[float] = DEFAULT_QUANTILES,
+    residual_sigma: float | None = None,
+    enable_residual_fallback: bool = True,
+    model_config: dict[str, Any] | None = None,
+    deepar_num_samples: int | None = None,
+    device: str | torch.device = AUTO_DEVICE,
+) -> Forecaster:
+    name = model_name.lower()
+    if name not in {"lstm", "deepar", "tft"}:
+        raise ValueError("build_model_forecaster only supports torch baseline models.")
+    return TorchModelForecaster(
+        model_type=name,
+        model=model,
+        context_length=context_length,
+        forecast_length=forecast_length,
+        quantiles=quantiles,
+        residual_sigma=residual_sigma,
+        enable_residual_fallback=enable_residual_fallback,
+        model_config=model_config,
+        deepar_num_samples=deepar_num_samples,
+        device=device,
     )

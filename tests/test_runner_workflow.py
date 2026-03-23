@@ -13,7 +13,9 @@ import numpy as np
 import pandas as pd
 
 import src.forecast_eval as forecast_eval_module
+import src.progress as progress_module
 import src.run_experiment as run_experiment_module
+import src.system_eval as system_eval_module
 import src.train as train_module
 import src.train_utils as train_utils_module
 from src.device import default_device_type, resolve_device_name
@@ -61,6 +63,35 @@ def _write_example_windows_csv(path: Path, *, include_system_fields: bool = Fals
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame([row]).to_csv(path, index=False)
+
+
+def _write_example_windows_csv_with_rows(
+    path: Path,
+    rows: list[dict[str, object]],
+    *,
+    include_system_fields: bool = False,
+) -> None:
+    normalized_rows: list[dict[str, object]] = []
+    for idx, row in enumerate(rows):
+        base_row = {
+            "series": str(row.get("series", f"S{idx}")),
+            "start_index": int(row.get("start_index", idx)),
+            "history": json.dumps(row.get("history", [0.0, 1.0, 2.0, 3.0])),
+            "future_true": json.dumps(row.get("future_true", [4.0, 5.0])),
+            "y_pred_median": json.dumps(row.get("y_pred_median", [4.5, 5.5])),
+            "y_pred_95": json.dumps(row.get("y_pred_95", [5.0, 6.0])),
+        }
+        if include_system_fields:
+            base_row.update(
+                {
+                    "tau_pred": int(row.get("tau_pred", 1)),
+                    "tau_true": int(row.get("tau_true", 1)),
+                    "safe_ceiling": float(row.get("safe_ceiling", 6.5)),
+                }
+            )
+        normalized_rows.append(base_row)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(normalized_rows).to_csv(path, index=False)
 
 
 class RunnerWorkflowTests(unittest.TestCase):
@@ -116,18 +147,18 @@ class RunnerWorkflowTests(unittest.TestCase):
                     "--models",
                     "lstm",
                     "--splits",
-                    "train,val,test",
+                    "val,test",
                     "--system-splits",
                     "test",
-                    "--sampling-mode",
-                    "rolling",
                     "--max-windows-per-series",
                     "3",
                     "--batch-size",
                     "8",
-                    "--max-epochs",
-                    "2",
-                    "--patience",
+                    "--max-iterations",
+                    "4",
+                    "--patience-iterations",
+                    "4",
+                    "--validate-every",
                     "2",
                     "--log-every",
                     "2",
@@ -166,8 +197,8 @@ class RunnerWorkflowTests(unittest.TestCase):
                     "prepare_data",
                     "train",
                     "forecast_eval",
-                    "system_eval",
                     "cp_sweep",
+                    "system_eval",
                 ],
             )
             self.assertTrue(all(stage["status"] == "success" for stage in status["stages"].values()))
@@ -179,7 +210,7 @@ class RunnerWorkflowTests(unittest.TestCase):
                 run_dir / "reports" / "example_windows_test.png",
                 run_dir / "reports" / "system_eval_test.png",
                 run_dir / "reports" / "example_windows_system_eval_test.png",
-                run_dir / "reports" / "cp_sweep_val.png",
+                run_dir / "reports" / "cp_sweep_train.png",
                 run_dir / "reports" / "report_metadata.json",
             ]
             for path in expected_reports:
@@ -225,18 +256,18 @@ class RunnerWorkflowTests(unittest.TestCase):
                     "--models",
                     "lstm",
                     "--splits",
-                    "train,val,test",
+                    "val,test",
                     "--system-splits",
                     "test",
-                    "--sampling-mode",
-                    "rolling",
                     "--max-windows-per-series",
                     "3",
                     "--batch-size",
                     "8",
-                    "--max-epochs",
-                    "2",
-                    "--patience",
+                    "--max-iterations",
+                    "4",
+                    "--patience-iterations",
+                    "4",
+                    "--validate-every",
                     "2",
                     "--log-every",
                     "2",
@@ -271,8 +302,8 @@ class RunnerWorkflowTests(unittest.TestCase):
                     "prepare_data",
                     "train",
                     "forecast_eval",
-                    "system_eval",
                     "cp_sweep",
+                    "system_eval",
                     "tau_calibration",
                     "calibrated_system_eval",
                 ],
@@ -311,9 +342,11 @@ class RunnerWorkflowTests(unittest.TestCase):
                 "lstm",
                 "--batch-size",
                 "8",
-                "--max-epochs",
-                "2",
-                "--patience",
+                "--max-iterations",
+                "4",
+                "--patience-iterations",
+                "4",
+                "--validate-every",
                 "2",
                 "--log-every",
                 "2",
@@ -378,14 +411,17 @@ class RunnerWorkflowTests(unittest.TestCase):
         self.assertIn("stage_status.json", source)
         self.assertIn("example_windows_system_eval_test.png", source)
         self.assertIn("calibrated_system_eval_comparison.csv", source)
-        self.assertIn("('chronos2', 'lstm', 'deepar', 'seasonal_naive')", source)
+        self.assertIn("('chronos2', 'lstm', 'deepar', 'tft', 'seasonal_naive')", source)
         self.assertNotIn("subprocess", source)
         self.assertNotIn("src/train.py", source)
         self.assertNotIn("src/forecast_eval.py", source)
         self.assertNotIn("src/system_eval.py", source)
 
     def test_runner_filters_zero_shot_models_out_of_train_stage(self) -> None:
-        self.assertEqual(_filter_train_models("lstm,deepar,chronos2,seasonal_naive"), "lstm,deepar")
+        self.assertEqual(
+            _filter_train_models("lstm,deepar,tft,chronos2,seasonal_naive"),
+            "lstm,deepar,tft",
+        )
         self.assertEqual(_filter_train_models("chronos2,lstm"), "lstm")
         self.assertEqual(_filter_train_models("seasonal_naive,lstm"), "lstm")
         with self.assertRaises(ValueError):
@@ -425,7 +461,7 @@ class RunnerWorkflowTests(unittest.TestCase):
         ):
             self.assertEqual(default_device_type(), "cpu")
 
-    def test_training_progress_updates_during_epoch(self) -> None:
+    def test_training_progress_updates_during_iteration(self) -> None:
         class _FakeTqdm:
             def __init__(self, *args, **kwargs) -> None:
                 self.total = kwargs["total"]
@@ -449,31 +485,115 @@ class RunnerWorkflowTests(unittest.TestCase):
         with mock.patch.object(train_utils_module, "tqdm", side_effect=_FakeTqdm):
             progress = train_utils_module._TrainingProgressDisplay(
                 "demo",
-                total_epochs=5,
+                total_iterations=20,
                 total_train_batches=20,
             )
             fake_bar = progress._bar
             assert fake_bar is not None
             progress.update(
-                0.5,
+                10,
                 phase="train",
+                iteration=10,
                 epoch=1,
                 batch_idx=10,
                 batch_total=20,
                 batch_loss=0.123,
             )
-            self.assertAlmostEqual(fake_bar.n, 0.5)
+            self.assertAlmostEqual(fake_bar.n, 10.0)
             self.assertIsNotNone(fake_bar.postfix)
             assert fake_bar.postfix is not None
             self.assertEqual(
                 fake_bar.bar_format,
-                "{l_bar}{bar}| {n:.2f}/{total:.0f} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
+                "{l_bar}{bar}| {n:.0f}/{total:.0f} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
             )
-            self.assertEqual(fake_bar.postfix["epoch"], "1/5")
+            self.assertEqual(fake_bar.postfix["iter"], "10/20")
+            self.assertEqual(fake_bar.postfix["epoch"], "1")
             self.assertEqual(fake_bar.postfix["batch"], "10/20")
             self.assertEqual(fake_bar.postfix["phase"], "train")
             self.assertEqual(fake_bar.postfix["batch_loss"], "0.123")
             self.assertNotEqual(fake_bar.postfix["eta"], "--:--")
+            progress.close()
+            self.assertTrue(fake_bar.closed)
+
+    def test_stage_progress_updates_with_eta(self) -> None:
+        class _FakeTqdm:
+            def __init__(self, *args, **kwargs) -> None:
+                self.total = kwargs["total"]
+                self.bar_format = kwargs.get("bar_format")
+                self.position = kwargs.get("position")
+                self.leave = kwargs.get("leave")
+                self.n = 0.0
+                self.postfix: dict[str, str] | None = None
+                self.closed = False
+
+            def update(self, delta: float) -> None:
+                self.n += delta
+
+            def set_postfix(self, postfix: dict[str, str], refresh: bool = False) -> None:
+                self.postfix = dict(postfix)
+
+            def write(self, message: str) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+        with mock.patch.object(progress_module, "tqdm", side_effect=_FakeTqdm):
+            progress = progress_module.StageProgressDisplay(
+                "forecast_eval:test:lstm",
+                total_items=10,
+                unit="window",
+            )
+            fake_bar = progress._bar
+            assert fake_bar is not None
+            progress.advance(3, phase="predict", series="S0")
+            self.assertAlmostEqual(fake_bar.n, 3.0)
+            self.assertIsNotNone(fake_bar.postfix)
+            assert fake_bar.postfix is not None
+            self.assertEqual(
+                fake_bar.bar_format,
+                "{l_bar}{bar}| {n:.0f}/{total:.0f} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
+            )
+            self.assertEqual(fake_bar.postfix["phase"], "predict")
+            self.assertEqual(fake_bar.postfix["series"], "S0")
+            self.assertNotEqual(fake_bar.postfix["eta"], "--:--")
+            progress.close()
+            self.assertTrue(fake_bar.closed)
+            self.assertEqual(fake_bar.position, 0)
+            self.assertTrue(fake_bar.leave)
+
+    def test_stage_progress_supports_nested_positioning(self) -> None:
+        class _FakeTqdm:
+            def __init__(self, *args, **kwargs) -> None:
+                self.total = kwargs["total"]
+                self.position = kwargs.get("position")
+                self.leave = kwargs.get("leave")
+                self.closed = False
+
+            def update(self, delta: float) -> None:
+                return None
+
+            def set_postfix(self, postfix: dict[str, str], refresh: bool = False) -> None:
+                return None
+
+            def write(self, message: str) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+        with mock.patch.object(progress_module, "tqdm", side_effect=_FakeTqdm):
+            progress = progress_module.StageProgressDisplay(
+                "nested",
+                total_items=5,
+                unit="window",
+                position=1,
+                leave=False,
+            )
+            fake_bar = progress._bar
+            assert fake_bar is not None
+            self.assertEqual(fake_bar.position, 1)
+            self.assertFalse(fake_bar.leave)
             progress.close()
             self.assertTrue(fake_bar.closed)
 
@@ -486,10 +606,12 @@ class RunnerWorkflowTests(unittest.TestCase):
     def test_entrypoint_parsers_default_device_to_auto(self) -> None:
         with mock.patch.object(sys, "argv", ["run_experiment.py"]):
             self.assertEqual(run_experiment_module.parse_args().device, "auto")
+            self.assertEqual(run_experiment_module.parse_args().splits, "val,test")
         with mock.patch.object(sys, "argv", ["train.py"]):
             self.assertEqual(train_module.parse_args().device, "auto")
         with mock.patch.object(sys, "argv", ["forecast_eval.py"]):
             self.assertEqual(forecast_eval_module.parse_args().device, "auto")
+            self.assertEqual(forecast_eval_module.parse_args().splits, "val,test")
         if importlib.util.find_spec("ruptures") is not None:
             import src.evaluate as evaluate_module
 
@@ -514,6 +636,7 @@ class RunnerWorkflowTests(unittest.TestCase):
             system_dir = tmp_path / "system_eval" / "test"
             _write_example_windows_csv(forecast_dir / "lstm_forecast_windows.csv")
             _write_example_windows_csv(forecast_dir / "chronos2_forecast_windows.csv")
+            _write_example_windows_csv(forecast_dir / "seasonal_naive_forecast_windows.csv")
             _write_example_windows_csv(system_dir / "deepar_system_windows.csv", include_system_fields=True)
 
             selected_forecast = _select_example_window_row(
@@ -534,8 +657,96 @@ class RunnerWorkflowTests(unittest.TestCase):
             system_outputs = build_system_example_window_report(tmp_path, split="test")
             self.assertIn("example_windows_test_plot", forecast_outputs)
             self.assertTrue((tmp_path / "reports" / "example_windows_test.png").exists())
+            self.assertIn("example_windows_chronos2_test_plot", forecast_outputs)
+            self.assertTrue((tmp_path / "reports" / "example_windows_chronos2_test.png").exists())
+            self.assertIn("example_windows_lstm_test_plot", forecast_outputs)
+            self.assertTrue((tmp_path / "reports" / "example_windows_lstm_test.png").exists())
+            self.assertIn("example_windows_seasonal_naive_test_plot", forecast_outputs)
+            self.assertTrue((tmp_path / "reports" / "example_windows_seasonal_naive_test.png").exists())
             self.assertIn("example_windows_system_eval_test_plot", system_outputs)
             self.assertTrue((tmp_path / "reports" / "example_windows_system_eval_test.png").exists())
+            self.assertIn("example_windows_system_eval_deepar_test_plot", system_outputs)
+            self.assertTrue((tmp_path / "reports" / "example_windows_system_eval_deepar_test.png").exists())
+
+    def test_render_example_windows_script_supports_per_model_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            experiment_dir = tmp_path / "experiment"
+            forecast_dir = experiment_dir / "forecast_eval" / "test"
+            system_dir = experiment_dir / "system_eval" / "test"
+            reports_dir = experiment_dir / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            (reports_dir / "report_index.json").write_text(json.dumps({"existing_plot": "keep-me"}))
+
+            _write_example_windows_csv_with_rows(
+                forecast_dir / "seasonal_naive_forecast_windows.csv",
+                [
+                    {"series": "bad", "start_index": 3, "history": [0.0, 0.0], "future_true": [0.5, 0.5]},
+                    {
+                        "series": "paper",
+                        "start_index": 77,
+                        "history": [10.0, 11.0, 12.0],
+                        "future_true": [13.0, 14.0],
+                        "y_pred_median": [13.2, 14.1],
+                        "y_pred_95": [14.0, 15.0],
+                    },
+                ],
+            )
+            _write_example_windows_csv_with_rows(
+                system_dir / "seasonal_naive_system_windows.csv",
+                [
+                    {
+                        "series": "bad",
+                        "start_index": 3,
+                        "history": [0.0, 0.0],
+                        "future_true": [0.5, 0.5],
+                        "y_pred_median": [0.6, 0.6],
+                        "y_pred_95": [0.8, 0.8],
+                        "tau_pred": 0,
+                        "tau_true": 1,
+                        "safe_ceiling": 0.9,
+                    },
+                    {
+                        "series": "paper",
+                        "start_index": 77,
+                        "history": [10.0, 11.0, 12.0],
+                        "future_true": [13.0, 14.0],
+                        "y_pred_median": [13.2, 14.1],
+                        "y_pred_95": [14.0, 15.0],
+                        "tau_pred": 1,
+                        "tau_true": 1,
+                        "safe_ceiling": 15.0,
+                    }
+                ],
+                include_system_fields=True,
+            )
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    "src/render_example_windows.py",
+                    "--experiment-dir",
+                    str(experiment_dir),
+                    "--split",
+                    "test",
+                    "--models",
+                    "seasonal_naive",
+                    "--kinds",
+                    "forecast,system",
+                    "--model-row-indexes",
+                    "seasonal_naive:1",
+                    "--strict",
+                ],
+                cwd=self._repo_root(),
+                check=True,
+            )
+
+            self.assertTrue((reports_dir / "example_windows_seasonal_naive_test.png").exists())
+            self.assertTrue((reports_dir / "example_windows_system_eval_seasonal_naive_test.png").exists())
+            report_index = json.loads((reports_dir / "report_index.json").read_text())
+            self.assertEqual(report_index["existing_plot"], "keep-me")
+            self.assertIn("example_windows_seasonal_naive_test_plot", report_index)
+            self.assertIn("example_windows_system_eval_seasonal_naive_test_plot", report_index)
 
     def test_publish_report_plots_copies_pngs_and_normalizes_example_filenames(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -608,19 +819,18 @@ class RunnerWorkflowTests(unittest.TestCase):
     def test_cp_sweep_report_handles_single_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            sweep_dir = tmp_path / "cp_sweep" / "val"
+            sweep_dir = tmp_path / "cp_sweep" / "train"
             sweep_dir.mkdir(parents=True, exist_ok=True)
             pd.DataFrame(
                 [
-                    {"model": "lstm", "cp_penalty": 10.0, "cp_min_size": 8, "MAE_CP": 1.23},
-                    {"model": "lstm", "cp_penalty": 15.0, "cp_min_size": 8, "MAE_CP": 1.11},
-                    {"model": "lstm", "cp_penalty": 10.0, "cp_min_size": 10, "MAE_CP": 1.09},
-                    {"model": "lstm", "cp_penalty": 15.0, "cp_min_size": 10, "MAE_CP": 0.98},
+                    {"model": "lstm", "cp_detector": "clasp", "cp_min_size": 8, "break_f1": 0.72, "tau_mae_when_both_break": 1.2, "coverage_gap": 0.02, "sharpness": 0.4},
+                    {"model": "lstm", "cp_detector": "clasp", "cp_min_size": 10, "break_f1": 0.81, "tau_mae_when_both_break": 1.0, "coverage_gap": 0.03, "sharpness": 0.3},
+                    {"model": "lstm", "cp_detector": "clasp", "cp_min_size": 12, "break_f1": 0.77, "tau_mae_when_both_break": 1.5, "coverage_gap": 0.01, "sharpness": 0.5},
                 ]
             ).to_csv(sweep_dir / "cp_sweep_summary.csv", index=False)
-            outputs = build_cp_sweep_report(tmp_path, split="val")
-            self.assertIn("cp_sweep_val_plot", outputs)
-            self.assertTrue((tmp_path / "reports" / "cp_sweep_val.png").exists())
+            outputs = build_cp_sweep_report(tmp_path, split="train")
+            self.assertIn("cp_sweep_train_plot", outputs)
+            self.assertTrue((tmp_path / "reports" / "cp_sweep_train.png").exists())
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ Codebase for the paper:
 - Trainable subset:
   `200` complete cells selected with a neutral deterministic rule.
 - Current main reproduced run:
-  `context = 48`,
+  `context = 144`,
   `horizon = 48`,
   `70 / 10 / 20` chronological split,
   `seed = 42`.
@@ -99,16 +99,17 @@ Codebase for the paper:
   --data-path data/data_tim_milan_10min_trainable_200.csv \
   --context-length 144 \
   --horizon 48 \
-  --models lstm,deepar,chronos2 \
-  --max-epochs 5 \
-  --patience 2`
+  --models lstm,deepar,chronos2,seasonal_naive \
+  --max-iterations 10000 \
+  --patience-iterations 1000 \
+  --validate-every 5000`
 - This runs:
   `prepare_data -> train -> forecast_eval -> system_eval -> cp_sweep -> tau_calibration`
 - `seasonal_naive`:
   copy the value from the same time one day earlier,
   then add a simple history-derived upper margin for `q95`
 - Main experiment directory:
-  `results/experiments/data_tim_milan_10min_trainable_200_ctx48_h48/q50_q95_seed42`
+  `results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42`
 - The pipeline is cadence-flexible.
 - The same runner also works on other regular timestamp grids.
 
@@ -134,11 +135,50 @@ Codebase for the paper:
 - Zero-shot Chronos-2 is not the best model on this run,
   but it is a credible no-retraining operating point inside the full control loop.
 
-![Forecast evaluation on Milan test windows](results/plots/readme/forecast_eval_test.png)
+![Forecast evaluation on Milan test windows](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/forecast_eval_test.png)
 
-![System evaluation on Milan test windows](results/plots/readme/system_eval_test.png)
+![System evaluation on Milan test windows](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/system_eval_test.png)
 
-![Chronos-2 pipeline example](results/plots/readme/pipeline_example_chronos2_test.png)
+Per-model pipeline examples on the same saved Milan test window:
+
+![LSTM pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_lstm_test.png)
+
+![DeepAR pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_deepar_test.png)
+
+![Chronos-2 pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_chronos2_test.png)
+
+![Seasonal-naive pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_seasonal_naive_test.png)
+
+### Interpretation and failure modes
+- The saved `144 / 48` example windows show that the deep baselines do not fail in the same way.
+- `LSTM` fails mainly through **level instability**:
+  on some Milan cells it shifts the whole future path far too high,
+  and the associated `q95` becomes extremely conservative.
+  In practice this yields very high coverage but poor sharpness and early predicted change points.
+- A likely reason is architectural:
+  the current `LSTM` forecaster is a direct encoder-to-horizon map with no explicit scale normalization,
+  no explicit daily-seasonality structure,
+  and no autoregressive correction step.
+  On a heterogeneous multi-series dataset this can make the learned level fragile across cells and regimes.
+- `DeepAR` fails in the opposite direction:
+  its forecast paths in the saved examples are too flat and too low,
+  and its `q95` often under-covers the realized future.
+  That produces safe ceilings that are too low and change-point errors that are operationally unsafe.
+- A likely reason is the train/eval mismatch:
+  `DeepAR` is optimized with teacher forcing during training,
+  but is used autoregressively at forecast time.
+  Small one-step errors then feed back into later steps,
+  which can flatten the trajectory and collapse upper-tail coverage.
+- The comparison with `seasonal_naive` is important:
+  on strongly daily-periodic windows,
+  a simple lag-1-day baseline can preserve the local shape better than the learned deep models.
+  This is an informative negative result, not just a bad run:
+  on this benchmark, generic recurrent models can be less reliable than a strong seasonal prior when calibration and control safety matter.
+- For the paper, the main takeaway is:
+  aggregate metrics alone are not enough.
+  The example windows reveal two distinct failure modes,
+  `LSTM` over-predicting with over-wide ceilings and `DeepAR` under-predicting with under-covered ceilings,
+  and both matter directly for forecast-to-control deployment.
 
 ## Secondary analyses
 - `cp_sweep`

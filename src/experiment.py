@@ -306,6 +306,93 @@ def valid_window_start_indices(
     return np.arange(start_min, start_max + 1, dtype=int)
 
 
+def stepped_window_start_indices(
+    manifest: ExperimentManifest,
+    split: str,
+    *,
+    step: int,
+    context_length: int | None = None,
+    horizon: int | None = None,
+) -> np.ndarray:
+    starts = valid_window_start_indices(
+        manifest,
+        split,
+        context_length=context_length,
+        horizon=horizon,
+    )
+    window_step = int(step)
+    if window_step <= 0:
+        raise ValueError("step must be positive.")
+    return starts[::window_step]
+
+
+def canonical_eval_start_indices(
+    manifest: ExperimentManifest,
+    split: str,
+    *,
+    context_length: int | None = None,
+    horizon: int | None = None,
+) -> np.ndarray:
+    hz = int(horizon or manifest.horizon)
+    return stepped_window_start_indices(
+        manifest,
+        split,
+        step=hz,
+        context_length=context_length,
+        horizon=horizon,
+    )
+
+
+def build_window_starts_map(
+    *,
+    manifest: ExperimentManifest,
+    split: str,
+    step: int,
+    series_names: Sequence[str] | None = None,
+    context_length: int | None = None,
+    horizon: int | None = None,
+    max_windows_per_series: int | None = None,
+) -> dict[str, list[int]]:
+    starts = stepped_window_start_indices(
+        manifest,
+        split,
+        step=step,
+        context_length=context_length,
+        horizon=horizon,
+    )
+    if starts.size == 0:
+        raise ValueError(
+            f"No valid windows for split={split} with context_length={context_length or manifest.context_length} "
+            f"and horizon={horizon or manifest.horizon}."
+        )
+    if max_windows_per_series is not None and max_windows_per_series > 0:
+        starts = starts[: int(max_windows_per_series)]
+    names = list(series_names) if series_names is not None else list(manifest.series_columns)
+    values = starts.astype(int).tolist()
+    return {name: list(values) for name in names}
+
+
+def build_canonical_eval_starts_map(
+    *,
+    manifest: ExperimentManifest,
+    split: str,
+    series_names: Sequence[str] | None = None,
+    context_length: int | None = None,
+    horizon: int | None = None,
+    max_windows_per_series: int | None = None,
+) -> dict[str, list[int]]:
+    hz = int(horizon or manifest.horizon)
+    return build_window_starts_map(
+        manifest=manifest,
+        split=split,
+        step=hz,
+        series_names=series_names,
+        context_length=context_length,
+        horizon=horizon,
+        max_windows_per_series=max_windows_per_series,
+    )
+
+
 def build_sampled_starts_map(
     *,
     manifest: ExperimentManifest,
@@ -327,11 +414,13 @@ def build_sampled_starts_map(
 
     names = list(series_names) if series_names is not None else list(manifest.series_columns)
     if sampling_mode == "rolling":
-        selected = starts[:: max(1, int(window_step))]
-        if max_windows_per_series is not None and max_windows_per_series > 0:
-            selected = selected[: int(max_windows_per_series)]
-        values = selected.astype(int).tolist()
-        return {name: list(values) for name in names}
+        return build_window_starts_map(
+            manifest=manifest,
+            split=split,
+            step=max(1, int(window_step)),
+            series_names=names,
+            max_windows_per_series=max_windows_per_series,
+        )
 
     if sampling_mode != "random":
         raise ValueError("sampling_mode must be 'random' or 'rolling'.")

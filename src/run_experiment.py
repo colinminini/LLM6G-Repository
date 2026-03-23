@@ -17,10 +17,18 @@ if __package__ in {None, ""}:
     _sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from src.config import (
+    DEFAULT_CP_DETECTOR,
+    DEFAULT_CP_EXCLUSION_RADIUS,
+    DEFAULT_CP_PERIOD_LENGTH,
+    DEFAULT_CP_SCORE_THRESHOLD,
     DEFAULT_DATASET_PATH,
+    DEFAULT_DEEPAR_ITEM_EMBEDDING_DIM,
+    DEFAULT_DEEPAR_LIKELIHOOD,
+    DEFAULT_DEEPAR_NUM_SAMPLES,
     DEFAULT_QUANTILES,
     DEFAULT_RANDOM_SEED,
     DEFAULT_TIMESTAMP_COL,
+    SUPPORTED_DEEPAR_LIKELIHOODS,
     TRAINABLE_BASELINE_MODELS,
     parse_quantiles,
 )
@@ -42,8 +50,8 @@ STAGE_ORDER = (
     "prepare_data",
     "train",
     "forecast_eval",
-    "system_eval",
     "cp_sweep",
+    "system_eval",
     "tau_calibration",
     "calibrated_system_eval",
 )
@@ -52,8 +60,8 @@ DEFAULT_STAGE_ORDER = (
     "prepare_data",
     "train",
     "forecast_eval",
-    "system_eval",
     "cp_sweep",
+    "system_eval",
 )
 
 OPTIONAL_TAU_STAGE_ORDER = (
@@ -144,13 +152,13 @@ def _stage_metrics(output_dir: Path, stage: str) -> tuple[dict[str, Any], dict[s
         summary = _read_json_if_exists(output_dir / "training" / "training_summary.json") or {}
         metrics: dict[str, Any] = {}
         for model_name, payload in summary.get("models", {}).items():
-            history_path = Path(payload["history_path"])
-            if history_path.exists():
-                history = json.loads(history_path.read_text())
-                metrics[model_name] = {
-                    "val_loss_last": history.get("val_loss", [None])[-1],
-                    "test_rmse_last": history.get("test_rmse", [None])[-1],
-                }
+            monitor_metrics = payload.get("monitor_metrics", {})
+            val_metrics = monitor_metrics.get("val", {})
+            metrics[model_name] = {
+                "monitor_val_loss": monitor_metrics.get("monitor_val_loss"),
+                "monitor_val_rmse": monitor_metrics.get("monitor_val_rmse"),
+                "val_pinball_q50": val_metrics.get("pinball_q50"),
+            }
         return metrics, build_training_report(output_dir)
 
     if stage == "forecast_eval":
@@ -178,16 +186,15 @@ def _stage_metrics(output_dir: Path, stage: str) -> tuple[dict[str, Any], dict[s
         return metrics, build_system_eval_report(output_dir)
 
     if stage == "cp_sweep":
-        summary_path = output_dir / "cp_sweep" / "val" / "cp_sweep_summary.csv"
+        summary_path = output_dir / "cp_sweep" / "train" / "cp_sweep_best_configs.csv"
         metrics: dict[str, Any] = {}
         if summary_path.exists():
             import pandas as pd
 
             df = pd.read_csv(summary_path)
             if not df.empty:
-                best = df.sort_values(["model", "MAE_CP", "coverage_gap"]).groupby("model", sort=False).head(1)
-                metrics["best_mae_rows"] = best.to_dict("records")
-        return metrics, build_cp_sweep_report(output_dir, split="val")
+                metrics["best_break_f1_rows"] = df.to_dict("records")
+        return metrics, build_cp_sweep_report(output_dir, split="train")
 
     if stage == "tau_calibration":
         summary_path = output_dir / "tau_calibration" / "tau_calibration_best_test_rows.csv"
@@ -253,23 +260,37 @@ def _build_stage_command(
             _filter_train_models(args.models),
             "--batch-size",
             str(args.batch_size),
+            "--train-window-step",
+            str(args.train_window_step),
             "--learning-rate",
             str(args.learning_rate),
             "--hidden-size",
             str(args.hidden_size),
             "--num-layers",
             str(args.num_layers),
+            "--tft-num-heads",
+            str(args.tft_num_heads),
+            "--deepar-likelihood",
+            args.deepar_likelihood,
+            "--deepar-num-samples",
+            str(args.deepar_num_samples),
+            "--deepar-item-embedding-dim",
+            str(args.deepar_item_embedding_dim),
             "--device",
             args.device,
         ]
         if args.log_every is not None:
             command.extend(["--log-every", str(args.log_every)])
-        command.extend(["--max-epochs", str(args.max_epochs)])
-        command.extend(["--patience", str(args.patience)])
         if args.max_iterations is not None:
             command.extend(["--max-iterations", str(args.max_iterations)])
         if args.patience_iterations is not None:
             command.extend(["--patience-iterations", str(args.patience_iterations)])
+        if args.validate_epochs is not None:
+            command.extend(["--validate-epochs", str(args.validate_epochs)])
+        if args.max_epochs is not None:
+            command.extend(["--max-epochs", str(args.max_epochs)])
+        if args.patience is not None:
+            command.extend(["--patience", str(args.patience)])
         return command
     if stage == "forecast_eval":
         return base + [
@@ -282,12 +303,8 @@ def _build_stage_command(
             args.models,
             "--splits",
             args.splits,
-            "--sampling-mode",
-            args.sampling_mode,
-            "--random-windows-per-series",
-            str(args.random_windows_per_series),
-            "--window-step",
-            str(args.window_step),
+            "--deepar-num-samples",
+            str(args.deepar_num_samples),
             "--device",
             args.device,
         ] + (
@@ -298,6 +315,7 @@ def _build_stage_command(
             ["--paired-windows"] if args.paired_windows else ["--independent-windows"]
         )
     if stage == "system_eval":
+        cp_manifest = output_dir / "cp_sweep" / "train" / "cp_sweep_manifest.json"
         return base + [
             "src/system_eval.py",
             "--forecast-dir",
@@ -310,14 +328,8 @@ def _build_stage_command(
             str(output_dir / "system_eval"),
             "--tolerance",
             str(args.tolerance),
-            "--cp-model",
-            args.cp_model,
-            "--cp-penalty",
-            str(args.cp_penalty),
-            "--cp-min-size",
-            str(args.cp_min_size),
-            "--cp-jump",
-            str(args.cp_jump),
+            "--cp-config-manifest",
+            str(cp_manifest),
         ]
     if stage == "cp_sweep":
         return base + [
@@ -327,9 +339,19 @@ def _build_stage_command(
             "--models",
             args.models,
             "--split",
-            "val",
+            "train",
             "--output-dir",
-            str(output_dir / "cp_sweep" / "val"),
+            str(output_dir / "cp_sweep" / "train"),
+            "--train-window-step",
+            str(args.train_window_step),
+            "--cp-detector",
+            args.cp_detector,
+            "--cp-period-lengths",
+            args.cp_period_lengths,
+            "--cp-exclusion-radii",
+            args.cp_exclusion_radii,
+            "--cp-score-thresholds",
+            args.cp_score_thresholds,
             "--cp-models",
             args.cp_models,
             "--cp-penalties",
@@ -342,8 +364,13 @@ def _build_stage_command(
             str(args.tolerance),
             "--coverage-target",
             str(args.coverage_target),
-        ]
+        ] + (
+            ["--cp-max-windows-per-series", str(args.cp_max_windows_per_series)]
+            if args.cp_max_windows_per_series is not None
+            else []
+        )
     if stage == "tau_calibration":
+        cp_manifest = output_dir / "cp_sweep" / "train" / "cp_sweep_manifest.json"
         return base + [
             "src/tau_calibration.py",
             "--forecast-dir",
@@ -358,6 +385,16 @@ def _build_stage_command(
             str(args.tolerance),
             "--coverage-target",
             str(args.coverage_target),
+            "--cp-config-manifest",
+            str(cp_manifest),
+            "--cp-detector",
+            args.cp_detector,
+            "--cp-period-length",
+            str(args.cp_period_length),
+            "--cp-exclusion-radius",
+            str(args.cp_exclusion_radius),
+            "--cp-score-threshold",
+            str(args.cp_score_threshold),
             "--cp-model",
             args.cp_model,
             "--cp-penalty",
@@ -400,17 +437,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume-from", default=None, help="Resume from this stage onward.")
     parser.add_argument("--overwrite", action="store_true", help="Allow rerunning stages in an existing output directory.")
     parser.add_argument("--with-tau-calibration", action="store_true", help="Append tau calibration and calibrated system eval to the default stage flow.")
-    parser.add_argument("--data-path", type=Path, default=DEFAULT_DATASET_PATH)
+    parser.add_argument("--data-path", type=Path, default=None)
     parser.add_argument("--timestamp-col", default=DEFAULT_TIMESTAMP_COL)
-    parser.add_argument("--context-length", type=int, default=48)
+    parser.add_argument("--context-length", type=int, default=144)
     parser.add_argument("--horizon", type=int, default=48)
     parser.add_argument("--quantiles", default="0.5,0.95")
     parser.add_argument("--random-seed", type=int, default=DEFAULT_RANDOM_SEED)
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.10)
     parser.add_argument("--test-ratio", type=float, default=0.20)
-    parser.add_argument("--models", default="lstm,deepar,chronos2,seasonal_naive")
-    parser.add_argument("--splits", default="train,val,test")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
+    parser.add_argument("--splits", default="val,test")
     parser.add_argument("--system-splits", default="test")
     parser.add_argument("--sampling-mode", choices=("random", "rolling"), default="random")
     parser.add_argument("--random-windows-per-series", type=int, default=50)
@@ -420,25 +457,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--independent-windows", dest="paired_windows", action="store_false")
     parser.set_defaults(paired_windows=True)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--max-iterations", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--patience-iterations", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--validate-every", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--train-window-step", type=int, default=1)
+    parser.add_argument("--max-iterations", type=int, default=5000)
+    parser.add_argument("--patience-iterations", type=int, default=1000)
+    parser.add_argument("--validate-epochs", type=int, default=1)
     parser.add_argument("--log-every", type=int, default=None)
-    parser.add_argument("--max-epochs", type=int, default=50)
-    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--max-epochs", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--patience", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--num-layers", type=int, default=2)
+    parser.add_argument("--tft-num-heads", type=int, default=4)
+    parser.add_argument("--deepar-likelihood", default=DEFAULT_DEEPAR_LIKELIHOOD, choices=SUPPORTED_DEEPAR_LIKELIHOODS)
+    parser.add_argument("--deepar-num-samples", type=int, default=DEFAULT_DEEPAR_NUM_SAMPLES)
+    parser.add_argument("--deepar-item-embedding-dim", type=int, default=DEFAULT_DEEPAR_ITEM_EMBEDDING_DIM)
     parser.add_argument("--device", default=AUTO_DEVICE, help=AUTO_DEVICE_HELP)
     parser.add_argument("--tolerance", type=int, default=3)
+    parser.add_argument("--cp-detector", default=DEFAULT_CP_DETECTOR)
+    parser.add_argument("--cp-period-length", default=DEFAULT_CP_PERIOD_LENGTH)
+    parser.add_argument("--cp-exclusion-radius", type=float, default=DEFAULT_CP_EXCLUSION_RADIUS)
+    parser.add_argument("--cp-score-threshold", type=float, default=DEFAULT_CP_SCORE_THRESHOLD)
     parser.add_argument("--cp-model", default="normal")
     parser.add_argument("--cp-penalty", type=float, default=10.0)
     parser.add_argument("--cp-min-size", type=int, default=8)
     parser.add_argument("--cp-jump", type=int, default=1)
+    parser.add_argument("--cp-period-lengths", default="auto,8,16")
+    parser.add_argument("--cp-exclusion-radii", default="0.05")
+    parser.add_argument("--cp-score-thresholds", default="0.5,0.6,0.7,0.75")
     parser.add_argument("--cp-models", default="normal")
     parser.add_argument("--cp-penalties", default="10,15,20")
     parser.add_argument("--cp-min-sizes", default="8,10,12")
     parser.add_argument("--cp-jumps", default="1")
+    parser.add_argument("--cp-max-windows-per-series", type=int, default=None)
     parser.add_argument("--coverage-target", type=float, default=0.95)
     parser.add_argument("--tau-selection-rule", default="best_val_mae_cp")
     return parser.parse_args()
@@ -446,6 +496,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.manifest_path is None and args.data_path is None:
+        print("Error: --data-path is required when --manifest-path is not provided.", file=sys.stderr)
+        sys.exit(1)
     args.device = resolve_device_name(args.device)
     if args.stages is None:
         requested_stages = list(DEFAULT_STAGE_ORDER)

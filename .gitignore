@@ -20,7 +20,8 @@ results/plots/*
 !results/plots/readme/
 !results/plots/readme/**
 **/events.out.tfevents.*
-paper/
+paper/*
+!paper/main.pdf
 references/
 prompt.txt
 uncommitted/

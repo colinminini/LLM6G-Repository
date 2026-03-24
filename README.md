@@ -10,14 +10,12 @@ Submitted to IEEE FINE 2026.
 
 This is the reproducible research codebase for the LLM6G paper. The paper proposes a general shift-aware forecast-to-control pipeline for mobile network traffic and benchmarks five probabilistic forecasters — including Chronos-2 (zero-shot) and TFT (trained) — on the public TIM Milan dataset.
 
-The pipeline makes the next traffic regime break a first-class control object:
+The pipeline:
 
 ```
 Recent history → Forecaster (q50, q95) → CLASP break detector (τ_pred)
               → Safe ceiling = max(q95[1:τ_pred]) → Hold policy until τ_pred → Refresh
 ```
-
-Any forecaster that produces `(q50, q95)` over a fixed horizon plugs in unchanged.
 
 ---
 

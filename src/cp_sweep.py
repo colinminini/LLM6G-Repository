@@ -509,7 +509,7 @@ def main() -> None:
         "tolerance": int(args.tolerance),
         "train_forecast_cache_dir": str(cache_root),
         "summary_csv": str(summary_path),
-        "best_configs_csv": str(best_path),
+        "best_configs_csv": best_path.name,
         "best_configs": best_df.to_dict("records"),
     }
     manifest_path = output_dir / "cp_sweep_manifest.json"

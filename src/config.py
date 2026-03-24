@@ -6,14 +6,14 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-DEFAULT_DATASET_PATH = Path("data/data_1to672.csv")
+DEFAULT_DATASET_PATH = Path("data/data_tim_milan_10min_trainable_200.csv")
 DEFAULT_TIMESTAMP_COL = "timestamp"
 DEFAULT_QUANTILES = (0.5, 0.95)
 DEFAULT_TRAIN_RATIO = 0.70
 DEFAULT_VAL_RATIO = 0.10
 DEFAULT_TEST_RATIO = 0.20
 DEFAULT_RANDOM_SEED = 42
-DEFAULT_CADENCE = "15min"
+DEFAULT_CADENCE = "10min"
 DEFAULT_RESULTS_ROOT = Path("results/experiments")
 DEFAULT_SEASONAL_NAIVE_PERIOD = 144
 DEFAULT_DEEPAR_LIKELIHOOD = "gaussian"

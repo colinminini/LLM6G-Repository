@@ -298,7 +298,13 @@ class DeepARForecast(nn.Module):
 
         hidden, cell = state
         sample_rows: list[torch.Tensor] = []
-        sampling_device = context.device
+        # NegativeBinomial.sample() uses _standard_gamma, not implemented on MPS.
+        # Sample on CPU and move results back to the original device.
+        mps_nb_fallback = (
+            self.likelihood == "negative_binomial"
+            and str(context.device).startswith("mps")
+        )
+        sampling_device = torch.device("cpu") if mps_nb_fallback else context.device
 
         for row_idx in range(batch_size):
             row_hidden = hidden[:, row_idx : row_idx + 1, :].repeat_interleave(num_samples, dim=1)
@@ -905,6 +911,13 @@ class TFTForecast(nn.Module):
         if past_inputs.size(2) != self.num_past_features:
             raise ValueError("past_inputs feature size does not match num_past_features.")
 
+        # Instance normalization on the raw-value channel (index 0) only.
+        # Time-feature channels (1+) are already bounded and must not be scaled.
+        # Mirrors LSTMForecast._compute_scale for consistent scale-invariance.
+        scale = past_inputs[:, :, :1].abs().mean(dim=1, keepdim=True) + 1.0  # (B, 1, 1)
+        past_inputs = past_inputs.clone()
+        past_inputs[:, :, :1] = past_inputs[:, :, :1] / scale
+
         batch_size = past_inputs.size(0)
         if future_inputs is None:
             future_inputs = past_inputs.new_zeros(
@@ -966,4 +979,4 @@ class TFTForecast(nn.Module):
         position_out = self.position_norm(selected_inputs + self.position_gate(position_out))
 
         future_out = position_out[:, -self.forecast_length :, :]
-        return self.output_layer(future_out)
+        return self.output_layer(future_out) * scale

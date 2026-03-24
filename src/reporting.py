@@ -340,6 +340,8 @@ def build_training_report(experiment_dir: str | Path) -> dict[str, str]:
         if not plotted:
             plt.close(fig)
             continue
+        if metric_key == "coverage":
+            ax.axhline(0.95, color="#d62728", linestyle="--", linewidth=1.2, label="target=0.95")
         ax.set_title(f"Training {title}")
         ax.set_xlabel("Epoch")
         ax.set_ylabel(title)
@@ -365,14 +367,18 @@ def build_forecast_eval_report(experiment_dir: str | Path, splits: Sequence[str]
             continue
         rows = [json.loads(path.read_text()) for path in metrics_paths]
         df = pd.DataFrame(rows).sort_values("model")
-        fig, axes = plt.subplots(1, 3, figsize=(11, 3.8))
+        fig, axes = plt.subplots(2, 2, figsize=(10, 6))
         metrics = [
-            ("rmse_q50", "RMSE q50"),
-            ("coverage_q95", "Coverage q95"),
-            ("interval_width_mean", "Mean q95 - q50"),
+            ("rmse_q50", "RMSE q50", None),
+            ("coverage_q95", "Coverage q95", 0.95),
+            ("pinball_q50", "Pinball q50", None),
+            ("pinball_q95", "Pinball q95", None),
         ]
-        for ax, (key, title) in zip(axes, metrics):
+        for ax, (key, title, target) in zip(axes.reshape(-1), metrics):
             ax.bar(df["model"], df[key], color="#1f77b4")
+            if target is not None:
+                ax.axhline(target, color="#d62728", linestyle="--", linewidth=1.2, label=f"target={target}")
+                ax.legend(fontsize=8)
             ax.set_title(f"{title} ({split})")
             ax.tick_params(axis="x", rotation=20)
             ax.grid(axis="y", alpha=0.3)
@@ -405,6 +411,9 @@ def build_system_eval_report(experiment_dir: str | Path, splits: Sequence[str] |
         ]
         for ax, (key, title) in zip(axes.reshape(-1), metrics):
             ax.bar(df["model"], df[key], color="#ff7f0e")
+            if key == "coverage_rate":
+                ax.axhline(0.95, color="#d62728", linestyle="--", linewidth=1.2, label="target=0.95")
+                ax.legend(fontsize=8)
             ax.set_title(f"{title} ({split})")
             ax.tick_params(axis="x", rotation=20)
             ax.grid(axis="y", alpha=0.3)
@@ -424,9 +433,24 @@ def build_system_example_window_report(
     strict: bool = False,
     include_extra_models: bool = True,
     include_preferred_model: bool = True,
+    window_seed: int | None = None,
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     system_dir = experiment_dir / "system_eval" / split
+
+    if window_seed is not None and shared_selector is None:
+        ref_path = system_dir / f"{PREFERRED_EXAMPLE_MODEL}_system_windows.csv"
+        if not ref_path.exists():
+            candidates = sorted(system_dir.glob("*_system_windows.csv"))
+            ref_path = candidates[0] if candidates else None
+        if ref_path is not None and ref_path.exists():
+            ref_df = pd.read_csv(ref_path, usecols=["series", "start_index"])
+            if not ref_df.empty:
+                rng = np.random.default_rng(window_seed)
+                idx = int(rng.integers(0, len(ref_df)))
+                row = ref_df.iloc[idx]
+                shared_selector = {"series": str(row["series"]), "start_index": int(row["start_index"])}
+
     selected_rows = _collect_selected_window_rows(
         system_dir,
         window_suffix="system_windows",
@@ -513,25 +537,45 @@ def build_cp_sweep_report(experiment_dir: str | Path, split: str = "train") -> d
     df = pd.read_csv(summary_path)
     if df.empty:
         return {}
+
+    metric = "tau_mae_when_both_break" if "tau_mae_when_both_break" in df.columns else "MAE_CP"
     models = list(dict.fromkeys(df["model"].tolist()))
-    fig, axes = plt.subplots(1, len(models), figsize=(5 * len(models), 4), squeeze=False)
+
+    df["_row_label"] = df.apply(
+        lambda r: f"min={int(r.cp_min_size)} per={r.cp_period_length}", axis=1
+    )
+
+    fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 5), squeeze=False)
+    fig.suptitle(f"CP Sweep — Tau MAE by Parameters ({split})", fontsize=10)
+
     for ax, model_name in zip(axes[0], models):
-        subset = df[df["model"] == model_name].copy()
-        sort_cols = ["break_f1", "tau_mae_when_both_break", "coverage_gap", "sharpness"]
-        available = [col for col in sort_cols if col in subset.columns]
-        ascending = [False, True, True, True][: len(available)]
-        subset = subset.sort_values(by=available, ascending=ascending, kind="stable").head(8)
-        labels = [
-            f"{row.cp_detector}\nmin={int(row.cp_min_size)}"
-            for row in subset.itertuples(index=False)
-        ]
-        values = subset["break_f1"] if "break_f1" in subset.columns else subset["MAE_CP"]
-        ax.bar(range(len(subset)), values, color="#2ca02c")
-        ax.set_title(f"CP Sweep ({model_name})")
-        ax.set_ylabel("Break F1" if "break_f1" in subset.columns else "MAE_CP")
-        ax.set_xticks(range(len(subset)))
-        ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.grid(axis="y", alpha=0.3)
+        sub = df[df["model"] == model_name].copy()
+        pivot = sub.pivot_table(
+            index="_row_label",
+            columns="cp_score_threshold",
+            values=metric,
+            aggfunc="mean",
+        )
+        # Sort rows best→worst so lowest tau_mae is at top
+        pivot = pivot.reindex(pivot.min(axis=1).sort_values().index)
+
+        vals = pivot.values.astype(float)
+        im = ax.imshow(vals, aspect="auto", cmap="YlOrRd_r",
+                       vmin=np.nanmin(vals), vmax=np.nanmax(vals))
+        ax.set_xticks(range(len(pivot.columns)))
+        ax.set_xticklabels([str(v) for v in pivot.columns], rotation=45, ha="right")
+        ax.set_yticks(range(len(pivot.index)))
+        ax.set_yticklabels(pivot.index, fontsize=8)
+        ax.set_xlabel("score_threshold", fontsize=8)
+        ax.set_title(model_name, fontsize=9)
+        for i in range(vals.shape[0]):
+            for j in range(vals.shape[1]):
+                v = vals[i, j]
+                if not np.isnan(v):
+                    ax.text(j, i, f"{v:.1f}", ha="center", va="center", fontsize=7,
+                            color="white" if v > np.nanmedian(vals) else "black")
+        plt.colorbar(im, ax=ax, label="Tau MAE", shrink=0.8)
+
     plot_path = experiment_dir / "reports" / f"cp_sweep_{split}.png"
     _save_figure(fig, plot_path)
     return {f"cp_sweep_{split}_plot": str(plot_path)}
@@ -613,6 +657,8 @@ def build_calibrated_system_eval_report(
         calibrated_values = subset[f"calibrated_{metric_key}"].to_numpy(dtype=float)
         ax.bar(x - width / 2, raw_values, width=width, label="raw", color="#7f7f7f")
         ax.bar(x + width / 2, calibrated_values, width=width, label="calibrated", color="#2ca02c")
+        if metric_key == "coverage_rate":
+            ax.axhline(0.95, color="#d62728", linestyle="--", linewidth=1.2, label="target=0.95")
         ax.set_xticks(x)
         ax.set_xticklabels(subset["model"], rotation=20)
         ax.set_title(f"{title} ({split})")
@@ -634,9 +680,28 @@ def build_example_window_report(
     strict: bool = False,
     include_extra_models: bool = True,
     include_preferred_model: bool = True,
+    window_seed: int | None = None,
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     forecast_dir = experiment_dir / "forecast_eval" / split
+
+    # If a seed is given and no explicit shared_selector, pick a random (series, start_index)
+    # from the reference model's windows so the same window is shown for all models.
+    if window_seed is not None and shared_selector is None:
+        ref_model = PREFERRED_EXAMPLE_MODEL
+        ref_path = forecast_dir / f"{ref_model}_forecast_windows.csv"
+        if not ref_path.exists():
+            # Fall back to first available model
+            candidates = sorted(forecast_dir.glob("*_forecast_windows.csv"))
+            ref_path = candidates[0] if candidates else None
+        if ref_path is not None and ref_path.exists():
+            ref_df = pd.read_csv(ref_path, usecols=["series", "start_index"])
+            if not ref_df.empty:
+                rng = np.random.default_rng(window_seed)
+                idx = int(rng.integers(0, len(ref_df)))
+                row = ref_df.iloc[idx]
+                shared_selector = {"series": str(row["series"]), "start_index": int(row["start_index"])}
+
     selected_rows = _collect_selected_window_rows(
         forecast_dir,
         window_suffix="forecast_windows",
@@ -717,18 +782,18 @@ def build_report_metadata(experiment_dir: str | Path) -> dict[str, str]:
     return {"report_metadata": str(metadata_path)}
 
 
-def build_report_bundle(experiment_dir: str | Path) -> dict[str, str]:
+def build_report_bundle(experiment_dir: str | Path, *, window_seed: int | None = None) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     outputs: dict[str, str] = {}
     outputs.update(build_prepare_data_report(experiment_dir))
     outputs.update(build_training_report(experiment_dir))
     outputs.update(build_forecast_eval_report(experiment_dir))
     outputs.update(build_system_eval_report(experiment_dir))
-    outputs.update(build_system_example_window_report(experiment_dir))
+    outputs.update(build_system_example_window_report(experiment_dir, window_seed=window_seed))
     outputs.update(build_cp_sweep_report(experiment_dir))
     outputs.update(build_tau_calibration_report(experiment_dir))
     outputs.update(build_calibrated_system_eval_report(experiment_dir))
-    outputs.update(build_example_window_report(experiment_dir))
+    outputs.update(build_example_window_report(experiment_dir, window_seed=window_seed))
     outputs.update(build_report_metadata(experiment_dir))
     index_path = experiment_dir / "reports" / "report_index.json"
     index_path.parent.mkdir(parents=True, exist_ok=True)

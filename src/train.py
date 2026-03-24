@@ -298,7 +298,7 @@ def main() -> None:
             save_dir=checkpoints_dir,
             log_dir=logs_dir,
             run_name=f"{model_name}_{manifest.dataset_name}",
-            monitor_metric="loss",
+            monitor_metric="pinball",
         )
         trainer = Trainer(
             model=model,

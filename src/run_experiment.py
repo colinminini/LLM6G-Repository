@@ -43,7 +43,6 @@ from src.reporting import (
     build_system_eval_report,
     build_tau_calibration_report,
     build_training_report,
-    publish_report_plots,
 )
 
 STAGE_ORDER = (
@@ -577,7 +576,6 @@ def main() -> None:
             subprocess.run(command, cwd=Path(__file__).resolve().parents[1], check=True)
             metrics, plots = _stage_metrics(output_dir, stage)
             report_bundle = build_report_bundle(output_dir)
-            published_plots = publish_report_plots(output_dir)
             elapsed = time.perf_counter() - start_time
             status_payload["stages"][stage] = {
                 "status": "success",

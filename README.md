@@ -113,6 +113,10 @@ Codebase for the paper:
 - The pipeline is cadence-flexible.
 - The same runner also works on other regular timestamp grids.
 
+# Training notes:
+- We used both loss and pinball_loss and results were way better for our task with pinball.
+- For DeepAR we tried both likelyhood function and for this dataset, neg-binomial works better.
+
 ## Evaluation logic
 - Forecast outputs:
   `q50` and `q95`

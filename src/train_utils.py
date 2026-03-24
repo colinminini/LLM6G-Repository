@@ -381,7 +381,7 @@ class NegativeBinomialNLLLoss(nn.Module):
         total_count = torch.clamp(1.0 / alpha, min=self.eps)
         probs = total_count / (total_count + mean)
         dist = torch.distributions.NegativeBinomial(total_count=total_count, probs=probs)
-        non_negative_target = torch.clamp(target, min=0.0)
+        non_negative_target = torch.clamp(target, min=0.0).round()
         loss = -dist.log_prob(non_negative_target)
         if observed_mask is None:
             return loss.mean()
@@ -494,18 +494,22 @@ class Trainer:
             quantile_preds: torch.Tensor | None = None
             if self.quantiles and not self.model.training:
                 # Validation path: use the actual inference path (autoregressive sampling)
-                # to produce honest coverage estimates comparable to forecast_eval.
-                # Teacher-forced analytical quantiles inflate coverage by ~3x vs inference.
+                # to produce honest metrics comparable to forecast_eval.
+                # Teacher-forced analytical outputs inflate coverage by ~3x and
+                # understate RMSE vs true autoregressive inference.
                 with torch.no_grad():
                     context = batch["full_target"][:, : self.model.context_length]
+                    num_val_samples = int(self.model_config.get("deepar_num_samples", 200))
                     draws = self.model.sample_forecasts(
                         context=context,
                         context_time_features=batch["time_features"][:, : self.model.context_length, :],
                         future_time_features=batch["time_features"][:, self.model.context_length :, :],
                         item_ids=batch["item_id"],
-                        num_samples=50,
+                        num_samples=num_val_samples,
                         random_seed=42,
                     )
+                    # Use MC median as RMSE base — matches forecast_eval's rmse_q50.
+                    preds_for_rmse = torch.quantile(draws, 0.5, dim=1)
                     q = torch.tensor(self.quantiles, device=draws.device, dtype=draws.dtype)
                     # draws: (batch, num_samples, horizon) → (num_q, batch, horizon) → (batch, horizon, num_q)
                     quantile_preds = torch.quantile(draws, q, dim=1).permute(1, 2, 0)
@@ -1004,6 +1008,8 @@ class Trainer:
                 monitor_name, monitor_value, monitor_mode = self._select_monitor_value(
                     monitor_val_loss,
                     monitor_val_coverage,
+                    val_metrics.get("pinball_q50"),
+                    val_metrics.get("pinball_q95"),
                 )
                 interval_iterations = int(interval_acc["num_batches"])
                 if best_metric is None:
@@ -1060,7 +1066,7 @@ class Trainer:
                     f"[{self.config.run_name}] iter {iteration}/{self.config.max_iterations} "
                     f"- train_loss={train_loss:.3f} "
                     f"- train_rmse={train_rmse:.3f} "
-                    f"- monitor_val_loss={monitor_val_loss:.3f} "
+                    f"- monitor_{monitor_name}={monitor_value:.3f} "
                     f"- val_rmse={float(val_metrics['rmse_q50']):.3f} "
                 )
                 message += (
@@ -1085,10 +1091,11 @@ class Trainer:
         self.final_canonical_metrics = {}
 
         if last_summary is not None:
+            monitor_label = last_summary.get("monitor_name") or "loss"
             metrics: Dict[str, Any] = {
                 "train_loss": last_summary["train_loss"],
                 "train_rmse": last_summary["train_rmse"],
-                "monitor_val_loss": last_summary["monitor_val_loss"],
+                f"monitor_val_{monitor_label}": last_summary["monitor_val_loss"],
                 "monitor_val_rmse": last_summary["monitor_val_rmse"],
             }
             for q, value in zip(self.quantiles, last_summary["train_quantiles"]):
@@ -1143,11 +1150,24 @@ class Trainer:
         )
 
     def _select_monitor_value(
-        self, val_loss: float, val_coverage: float | None
+        self,
+        val_loss: float,
+        val_coverage: float | None,
+        val_pinball_q50: float | None = None,
+        val_pinball_q95: float | None = None,
     ) -> tuple[str, float, str]:
         metric = self.config.monitor_metric.lower()
         if metric == "coverage" and val_coverage is not None and not math.isnan(val_coverage):
             return "coverage", float(val_coverage), "max"
+        if metric == "pinball":
+            q50 = float(val_pinball_q50) if val_pinball_q50 is not None and not math.isnan(float(val_pinball_q50)) else None
+            q95 = float(val_pinball_q95) if val_pinball_q95 is not None and not math.isnan(float(val_pinball_q95)) else None
+            if q50 is not None and q95 is not None:
+                return "pinball", q50 + q95, "min"
+            if q95 is not None:
+                return "pinball_q95", q95, "min"
+            if q50 is not None:
+                return "pinball_q50", q50, "min"
         return "loss", float(val_loss), "min"
 
 
@@ -1301,7 +1321,7 @@ def train_model(
         save_dir=root_dir / "checkpoints",
         log_dir=root_dir / "logs",
         run_name=f"{model_type}_{Path(manifest.dataset_path).stem}",
-        monitor_metric="loss",
+        monitor_metric="pinball",
     )
     trainer = Trainer(
         model=model,

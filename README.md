@@ -1,149 +1,211 @@
 # LLM6G
+
 Codebase for the paper:
-**Shift-Aware Forecast-to-Control on TIM Milan: A Public Telecom Benchmark for Zero-Shot and Trainable Models**
+**LLM6G: A Shift-Aware Forecast-to-Control Pipeline for 6G Mobile Network Traffic**
+Submitted to IEEE FINE 2026.
+
+---
 
 ## What this repo is
-- This repo is the reproducible codebase for our FINE 2026 paper submission.
-- The paper studies a **shift-aware forecast-to-control pipeline** on public telecom traffic.
-- The benchmark is built from the public **TIM Milan** dataset.
-- The main comparison is:
-  `seasonal_naive`, `LSTM`, `DeepAR`, and `Chronos-2` in zero-shot mode.
 
-## Paper claim
-- Traffic control should account for the **next change of distribution**, not only point accuracy.
-- The pipeline in this repo is:
-  forecast probabilistic traffic ->
-  predict the first break point ->
-  compute a pre-break safe ceiling ->
-  hold the control policy over that interval ->
-  rerun after the predicted break.
-- The practical question is:
-  can a zero-shot foundation model enter that loop and remain operationally credible against trained baselines?
+This is the reproducible research codebase for the LLM6G paper. The paper proposes a general shift-aware forecast-to-control pipeline for mobile network traffic and benchmarks five probabilistic forecasters — including Chronos-2 (zero-shot) and TFT (trained) — on the public TIM Milan dataset.
 
-## Main artifact
-- Public benchmark:
-  TIM Milan `InternetTraffic` at native `10min` cadence.
-- Full clean benchmark:
-  `10,000` raw grid cells,
-  `8,883` fully observed cells kept,
-  `1,117` incomplete cells dropped.
-- Trainable subset:
-  `200` complete cells selected with a neutral deterministic rule.
-- Current main reproduced run:
-  `context = 144`,
-  `horizon = 48`,
-  `70 / 10 / 20` chronological split,
-  `seed = 42`.
+The pipeline makes the next traffic regime break a first-class control object:
 
-## Repository map
-- `src/`
-  pipeline code, forecasting models, evaluation, experiment runner
-- `data/`
-  dataset builders for TIM Milan and the trainable subset
-- `results/experiments/`
-  full machine-readable outputs of experiment runs
-- `results/plots/readme/`
-  stable figures used in the README and paper
-- `notebooks/experiment_report.ipynb`
-  maintained report notebook for a finished run
-- `notebooks/legacy/`
-  archived exploratory notebooks kept outside the paper-facing workflow
-- `experiment_notes.md`
-  archival notes, older experiments, and meeting-log material
+```
+Recent history → Forecaster (q50, q95) → CLASP break detector (τ_pred)
+              → Safe ceiling = max(q95[1:τ_pred]) → Hold policy until τ_pred → Refresh
+```
+
+Any forecaster that produces `(q50, q95)` over a fixed horizon plugs in unchanged.
+
+---
+
+## Main findings
+
+Coverage and relative sharpness are competing objectives. No model dominates both.
+
+### Forecast quality — test set (7,400 windows)
+
+| Model          | RMSE  | Pinball q50 | Pinball q95 | Coverage q95 |
+|----------------|-------|-------------|-------------|--------------|
+| TFT            | 5.658 | 1.152       | 0.357       | 0.924        |
+| LSTM           | 5.684 | 1.389       | 0.385       | 0.951        |
+| DeepAR         | 5.796 | 1.493       | 0.817       | 0.667        |
+| Chronos-2      | 7.070 | 2.108       | 0.728       | 0.814        |
+| Seasonal Naive | 7.263 | 1.405       | 0.489       | 0.858        |
+
+### System quality — test set (7,400 windows)
+
+| Model          | MAE_CP | Tol. Hit | Coverage | Rel. Sharpness |
+|----------------|--------|----------|----------|----------------|
+| LSTM           | 7.175  | 0.487    | 0.984    | 0.237          |
+| TFT            | 7.386  | 0.462    | 0.968    | 0.153          |
+| Seasonal Naive | 7.333  | 0.427    | 0.973    | 0.251          |
+| Chronos-2      | 7.415  | 0.420    | 0.873    | **0.082**      |
+| DeepAR         | 7.162  | 0.426    | 0.802    | −0.041 ⚠       |
+
+**TFT** is the best trained operating point: 0.968 coverage, 0.153 relative sharpness.
+**Chronos-2** achieves the tightest ceiling (0.082 relative sharpness — 8.2% excess above realized demand) with no domain training.
+**DeepAR** relative sharpness −0.041 means the safe ceiling falls *below* realized traffic — a control failure caused by Gaussian intervals being too narrow for heavy-tailed traffic.
+
+Relative sharpness = `(safe_ceiling − max_realized) / max_realized`. Positive = over-provisioning; negative = under-provisioning.
+
+---
+
+## Repository structure
+
+```
+src/                    pipeline, models, training, evaluation, reporting
+data/                   dataset builders for TIM Milan
+paper/                  LaTeX paper sources
+results/experiments/    machine-readable outputs of the main run
+notebooks/              experiment report notebook
+```
+
+### Key source files
+
+| File | Role |
+|------|------|
+| `src/pipeline.py` | Probabilistic forecasting pipeline (all 5 models) |
+| `src/run_experiment.py` | End-to-end experiment runner |
+| `src/train.py` | Training loop (LSTM, TFT, DeepAR) |
+| `src/evaluate.py` | Forecast evaluation (RMSE, pinball, coverage) |
+| `src/system_eval.py` | System/control evaluation (MAE_CP, coverage, sharpness) |
+| `src/cp_sweep.py` | CLASP hyperparameter sweep |
+| `src/tau_calibration.py` | Post-hoc break timing calibration |
+| `src/reporting.py` | Report and plot generation |
+| `src/models.py` | LSTM, TFT, DeepAR model definitions |
+| `src/change_detection.py` | CLASP change-point detector wrapper |
+
+---
 
 ## Setup
-- Create an environment:
-  `python3 -m venv .venv && source .venv/bin/activate`
-- Install dependencies:
-  `pip install -r requirements.txt`
-- Chronos-2 inference can run on CPU.
-- The paper PDF in `paper/` requires a local TeX installation.
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Chronos-2 inference runs on CPU or MPS.
+
+---
+
+## Notebooks
+
+- [run.ipynb](run.ipynb) — End-to-end experiment launcher. Builds the dataset and runs the full 5-model pipeline in one place.
+- [experiment_report.ipynb](experiment_report.ipynb) — Read-only results viewer. Visualizes all 7 pipeline stages (training curves, forecast metrics, system metrics, CP sweep, tau calibration) from saved experiment artifacts.
+
+---
 
 ## Data
-- Dataset source:
-  Gianni Barlacchi et al., *A multi-source dataset of urban life in the city of Milan and the Province of Trentino*, *Scientific Data*, 2015.
-- Raw telecom files are accessed through the O-RAN SC mirror/reference page.
-- In this repo, we use only the `InternetTraffic` field.
-- The processed series are **Milan grid cells**, not radio sectors.
-- Values are normalized public telecom activity proxies, not literal Mbps counters.
 
-### Build the full TIM Milan benchmark
-- Command:
-  `python data/build_tim_milan_dataset.py`
-- Outputs:
-  `data/data_tim_milan_10min.csv`
-  `data/data_tim_milan_10min_metadata.csv`
-  `data/data_tim_milan_10min_dropped_cells.csv`
-- Builder policy:
-  keep the native `10min` cadence,
-  align the full city-wide grid,
-  keep all fully observed cells,
-  drop only incomplete cells.
+**Source:** Barlacchi et al., *A multi-source dataset of urban life in the city of Milan and the Province of Trentino*, Scientific Data, 2015.
 
-### Build the trainable subset
-- Command:
-  `python data/build_tim_milan_trainable_subset.py`
-- Outputs:
-  `data/data_tim_milan_10min_trainable_200.csv`
-  `data/data_tim_milan_10min_trainable_200_metadata.csv`
-- Selection rule:
-  sort complete cells by ascending `square_id`,
-  keep the first `200`.
-- This rule is neutral and reproducible.
+The dataset contains telecom activity proxies on a 100×100 grid over Milan at native 10-minute cadence. We use only the `InternetTraffic` field. Values are normalized grid-cell activity, not literal Mbps.
+
+```
+Full dataset:   10,000 raw cells → 8,883 fully observed cells (1,117 dropped)
+Trainable subset:  200 cells — first 200 by ascending square_id (neutral, reproducible)
+```
+
+### Build the datasets
+
+```bash
+python data/build_tim_milan_dataset.py
+# → data/data_tim_milan_10min.csv
+# → data/data_tim_milan_10min_metadata.csv
+
+python data/build_tim_milan_trainable_subset.py
+# → data/data_tim_milan_10min_trainable_200.csv
+# → data/data_tim_milan_10min_trainable_200_metadata.csv
+```
+
+---
 
 ## Run the published experiment
-- Main command:
-  `python src/run_experiment.py \
-  --overwrite \
-  --with-tau-calibration \
+
+```bash
+python src/run_experiment.py \
   --data-path data/data_tim_milan_10min_trainable_200.csv \
   --context-length 144 \
   --horizon 48 \
-  --models lstm,deepar,chronos2,seasonal_naive \
-  --max-iterations 10000 \
-  --patience-iterations 1000 \
-  --validate-every 5000`
-- This runs:
-  `prepare_data -> train -> forecast_eval -> system_eval -> cp_sweep -> tau_calibration`
-- `seasonal_naive`:
-  copy the value from the same time one day earlier,
-  then add a simple history-derived upper margin for `q95`
-- Main experiment directory:
-  `results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42`
-- The pipeline is cadence-flexible.
-- The same runner also works on other regular timestamp grids.
+  --models lstm,deepar,tft,chronos2,seasonal_naive \
+  --max-iterations 95000 \
+  --patience-iterations 9500 \
+  --validate-every 475 \
+  --overwrite \
+  --with-tau-calibration
+```
 
-# Training notes:
-- We used both loss and pinball_loss and results were way better for our task with pinball.
-- For DeepAR we tried both likelyhood function and for this dataset, neg-binomial works better.
+**Pipeline stages run in order:**
+`prepare_data → train → forecast_eval → system_eval → cp_sweep → tau_calibration`
 
-## Evaluation logic
-- Forecast outputs:
-  `q50` and `q95`
-- Control logic:
-  detect `tau_pred` on `q50`,
-  compute `safe_ceiling = max(q95[:tau_pred])`,
-  evaluate the resulting pre-break control interval
-- Forecast metrics:
-  `RMSE_q50`, `Pinball_q50`, `Pinball_q95`, `Coverage_q95`, interval width
-- System metrics:
-  `MAE_CP`, tolerance hit rate, `coverage_rate`, `sharpness`
-- The control interpretation is:
-  `coverage_rate` measures protection under the ceiling
-  `sharpness` measures how conservative the ceiling is
+**Experiment directory:**
+`results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/`
 
-## Main reproduced results
-- `LSTM` is strongest overall on the current Milan `200`-cell benchmark.
-- `Chronos-2` is the main zero-shot baseline.
-- `Chronos-2` stays close to `DeepAR` on system metrics while avoiding Milan-specific retraining.
-- Zero-shot Chronos-2 is not the best model on this run,
-  but it is a credible no-retraining operating point inside the full control loop.
+**Key configuration:**
+- Context = 144 steps (24 h — one full daily cycle)
+- Horizon = 48 steps (8 h)
+- Quantiles: q50, q95
+- Split: 70 / 10 / 20 chronological (train 6,249 / val 893 / test 1,786 rows)
+- Windows: non-overlapping, step = 48 → 7,400 test windows, 3,600 val windows
+- Seed: 42
 
-![Forecast evaluation on Milan test windows](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/forecast_eval_test.png)
+---
 
-![System evaluation on Milan test windows](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/system_eval_test.png)
+## Model details
 
-Per-model pipeline examples on the same saved Milan test window:
+### TFT — best trained model
+Temporal Fusion Transformer with variable selection networks, encoder-decoder LSTM (hidden 128, 2 layers, dropout 0.1), 4-head interpretable self-attention, and a direct quantile output head at q50/q95.
+
+**Channel-selective instance normalization:** the raw-value channel is normalized independently from the time-feature channels (cyclic hour-of-day, day-of-week). Normalizing time features destroys their positional meaning. Without this fix, the validation-to-test RMSE gap exceeds 30%.
+
+### Chronos-2 — LLM component, zero-shot
+`amazon/chronos-2` (120M parameters). Pretrained on a large diverse corpus via quantized token autoregression. No Milan-specific fine-tuning. Quantiles extracted from sampled token paths.
+
+This is the LLM in LLM6G: a foundation model deployed directly into a 6G-oriented control loop. The key property is that it requires no retraining when the traffic distribution shifts.
+
+### LSTM — trained baseline
+2-layer LSTM (hidden 128, dropout 0.1), direct quantile output head. Instance normalization on the context window.
+
+### DeepAR — cautionary baseline
+Autoregressive LSTM with per-series embeddings (dim 20), Gaussian likelihood, 200 Monte Carlo samples at inference. Gaussian intervals prove too narrow for heavy-tailed traffic: q95 coverage 0.667, relative sharpness −0.041. Included as a documented case of correct architecture with likelihood mismatch.
+
+### Seasonal Naive — lower baseline
+Q50: lag-144 value (yesterday-same-time). Q95: Q50 + 95th percentile of historical differences over the context. No training.
+
+### CLASP — change-point detector
+Non-parametric detector. Classifies sliding windows as pre/post-change via k-NN accuracy on z-normalized features. Returns τ with maximum score if score ≥ threshold; otherwise returns "no break" — enabling the pipeline to hold a single ceiling over the full horizon when the regime is stable.
+
+Tuned via validation grid search over 36 combinations (min_size ∈ {8,10,12}, period_length ∈ {8,16,auto}, score_threshold ∈ {0.5,0.6,0.7,0.75}). Best config for all models: min_size=8, period_length=16, score_threshold=0.5.
+
+---
+
+## Evaluation metrics
+
+**Forecast metrics** (per window):
+- `RMSE_q50` — point accuracy of the median path
+- `Pinball_q50`, `Pinball_q95` — quantile calibration
+- `Coverage_q95` — fraction of realized values below q95
+
+**System/control metrics** (per window):
+- `MAE_CP` — mean absolute error between predicted and realized break position (in steps)
+- `Tolerance hit rate` — fraction where |τ_pred − τ_true| ≤ 3 steps (30 min)
+- `Coverage rate` — fraction of windows where safe ceiling ≥ realized peak over the control interval
+- `Relative sharpness` — `(safe_ceiling − max_realized) / max_realized` — scale-invariant excess
+
+---
+
+## Figures
+
+![Forecast evaluation](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/forecast_eval_test.png)
+
+![System evaluation](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/system_eval_test.png)
+
+Per-model pipeline examples (same saved test window):
+
+![TFT pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_tft_test.png)
 
 ![LSTM pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_lstm_test.png)
 
@@ -151,74 +213,27 @@ Per-model pipeline examples on the same saved Milan test window:
 
 ![Chronos-2 pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_chronos2_test.png)
 
-![Seasonal-naive pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_seasonal_naive_test.png)
+![Seasonal Naive pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_seasonal_naive_test.png)
 
-### Interpretation and failure modes
-- The saved `144 / 48` example windows show that the deep baselines do not fail in the same way.
-- `LSTM` fails mainly through **level instability**:
-  on some Milan cells it shifts the whole future path far too high,
-  and the associated `q95` becomes extremely conservative.
-  In practice this yields very high coverage but poor sharpness and early predicted change points.
-- A likely reason is architectural:
-  the current `LSTM` forecaster is a direct encoder-to-horizon map with no explicit scale normalization,
-  no explicit daily-seasonality structure,
-  and no autoregressive correction step.
-  On a heterogeneous multi-series dataset this can make the learned level fragile across cells and regimes.
-- `DeepAR` fails in the opposite direction:
-  its forecast paths in the saved examples are too flat and too low,
-  and its `q95` often under-covers the realized future.
-  That produces safe ceilings that are too low and change-point errors that are operationally unsafe.
-- A likely reason is the train/eval mismatch:
-  `DeepAR` is optimized with teacher forcing during training,
-  but is used autoregressively at forecast time.
-  Small one-step errors then feed back into later steps,
-  which can flatten the trajectory and collapse upper-tail coverage.
-- The comparison with `seasonal_naive` is important:
-  on strongly daily-periodic windows,
-  a simple lag-1-day baseline can preserve the local shape better than the learned deep models.
-  This is an informative negative result, not just a bad run:
-  on this benchmark, generic recurrent models can be less reliable than a strong seasonal prior when calibration and control safety matter.
-- For the paper, the main takeaway is:
-  aggregate metrics alone are not enough.
-  The example windows reveal two distinct failure modes,
-  `LSTM` over-predicting with over-wide ceilings and `DeepAR` under-predicting with under-covered ceilings,
-  and both matter directly for forecast-to-control deployment.
-
-## Secondary analyses
-- `cp_sweep`
-  validation sweep of the PELT change-point detector
-- `tau_calibration`
-  post-hoc correction of predicted break points
-- In the current paper story:
-  CP tuning stays in the main pipeline,
-  tau calibration is a mixed exploratory result and not part of the deployed main method.
+---
 
 ## Paper
-- LaTeX sources:
-  `paper/main.tex`
-  `paper/sections/`
-  `paper/figures/`
-  `paper/references.bib`
-- Compile from `paper/` with:
-  `latexmk -pdf main.tex`
-- Default paper mode is anonymized submission.
-- Camera-ready authors can be restored through the toggle in `paper/main.tex`.
 
-## Notes
-- `README.md` is the codebase companion of the paper.
-- `experiment_notes.md` keeps older context and historical notes.
-- Legacy private-data and augmented-data experiments are kept out of the main paper story.
+LaTeX sources in `paper/`. Compile from the `paper/` directory:
+
+```bash
+latexmk -pdf main.tex
+```
+
+Toggle `\submissiontrue` / `\submissionfalse` in `paper/main.tex` for anonymous submission vs. camera-ready.
+
+---
 
 ## References
-- IEEE FINE 2026 CFP:
-  <https://www.ieee-fine.org/2026/>
-- TIM Milan dataset paper:
-  <https://doi.org/10.1038/sdata.2015.55>
-- O-RAN SC dataset mirror/reference page:
-  <https://lf-o-ran-sc.atlassian.net/wiki/spaces/SIM/pages/13435002/Simulated+datasets>
-- Chronos:
-  <https://arxiv.org/abs/2403.07815>
-- Chronos-2:
-  <https://arxiv.org/abs/2510.15821>
-- DeepAR:
-  <https://arxiv.org/abs/1704.04110>
+
+- TIM Milan dataset: <https://doi.org/10.1038/sdata.2015.55>
+- Chronos-2: <https://arxiv.org/abs/2510.15821>
+- TFT: Lim et al. (2021), International Journal of Forecasting
+- DeepAR: <https://arxiv.org/abs/1704.04110>
+- CLASP: Ermshaus et al., CIKM 2022
+- IEEE FINE 2026: <https://www.ieee-fine.org/2026/>

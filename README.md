@@ -58,7 +58,6 @@ Relative sharpness = `(safe_ceiling − max_realized) / max_realized`. Positive 
 ```
 src/                    pipeline, models, training, evaluation, reporting
 data/                   dataset builders for TIM Milan
-paper/                  LaTeX paper sources
 results/experiments/    machine-readable outputs of the main run
 notebooks/              experiment report notebook
 ```
@@ -214,18 +213,6 @@ Per-model pipeline examples (same saved test window):
 ![Chronos-2 pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_chronos2_test.png)
 
 ![Seasonal Naive pipeline example](results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/reports/example_windows_system_eval_seasonal_naive_test.png)
-
----
-
-## Paper
-
-LaTeX sources in `paper/`. Compile from the `paper/` directory:
-
-```bash
-latexmk -pdf main.tex
-```
-
-Toggle `\submissiontrue` / `\submissionfalse` in `paper/main.tex` for anonymous submission vs. camera-ready.
 
 ---
 

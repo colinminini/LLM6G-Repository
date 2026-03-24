@@ -59,7 +59,7 @@ Relative sharpness = `(safe_ceiling − max_realized) / max_realized`. Positive 
 src/                    pipeline, models, training, evaluation, reporting
 data/                   dataset builders for TIM Milan
 results/experiments/    machine-readable outputs of the main run
-notebooks/              experiment report notebook
+notebooks/              experiment report and run notebooks
 ```
 
 ### Key source files
@@ -126,15 +126,19 @@ python data/build_tim_milan_trainable_subset.py
 
 ```bash
 python src/run_experiment.py \
+  --with-tau-calibration \
+  --overwrite \
   --data-path data/data_tim_milan_10min_trainable_200.csv \
   --context-length 144 \
   --horizon 48 \
   --models lstm,deepar,tft,chronos2,seasonal_naive \
-  --max-iterations 95000 \
-  --patience-iterations 9500 \
-  --validate-every 475 \
-  --overwrite \
-  --with-tau-calibration
+  --train-window-step 6 \
+  --batch-size 64 \
+  --max-epochs 30 \
+  --validate-epochs 1 \
+  --patience 3 \
+  --cp-max-windows-per-series 50 \
+  --device auto
 ```
 
 **Pipeline stages run in order:**
@@ -224,3 +228,7 @@ Per-model pipeline examples (same saved test window):
 - DeepAR: <https://arxiv.org/abs/1704.04110>
 - CLASP: Ermshaus et al., CIKM 2022
 - IEEE FINE 2026: <https://www.ieee-fine.org/2026/>
+
+---
+
+Colin Minini

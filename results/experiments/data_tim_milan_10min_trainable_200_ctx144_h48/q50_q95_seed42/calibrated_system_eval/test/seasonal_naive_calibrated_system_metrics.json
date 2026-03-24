@@ -1,0 +1,13 @@
+{
+  "model": "seasonal_naive",
+  "split": "test",
+  "selected_calibrator": "global_median_offset",
+  "selection_rule": "best_val_mae_cp",
+  "timestamp_utc": "2026-03-23T21:30:43.239935+00:00",
+  "num_windows_total": 7400,
+  "MAE_CP": 7.332972972972973,
+  "tolerance": 3,
+  "tolerance_hit_rate": 0.4267567567567568,
+  "coverage_rate": 0.973305590963914,
+  "sharpness": 4.879403294570908
+}

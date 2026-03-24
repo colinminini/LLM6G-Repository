@@ -1,0 +1,108 @@
+{
+  "manifest_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/manifest.json",
+  "device": "mps",
+  "models": {
+    "lstm": {
+      "history_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/training/lstm_history.json",
+      "checkpoint_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/checkpoints/lstm_data_tim_milan_10min_trainable_200_best.pt",
+      "max_iterations": 94710,
+      "patience_iterations": 9471,
+      "validate_epochs": 1,
+      "validate_every": 3157,
+      "train_window_step": 6,
+      "training_schedule": {
+        "steps_per_epoch": 3157,
+        "dense_train_windows": 1211600,
+        "train_windows": 202000,
+        "schedule_ratio": 0.16672169032684053,
+        "log_every": 631
+      },
+      "deepar_likelihood": null,
+      "deepar_num_samples": null,
+      "tft_num_heads": null,
+      "monitor_metrics": {
+        "monitor_val_loss": 0.7793815946369841,
+        "monitor_val_rmse": 5.834212422207153,
+        "val": {
+          "rmse_q50": 5.834212422207153,
+          "pinball_q50": 1.1896269194285074,
+          "pinball_q95": 0.3645854114603113,
+          "coverage_q95": 0.9364351851851852,
+          "interval_width_mean": 5.116515542489511
+        },
+        "best_val": 1.5098797029919093,
+        "last_iteration": 37884,
+        "monitor": "pinball"
+      },
+      "canonical_metrics": {}
+    },
+    "deepar": {
+      "history_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/training/deepar_history.json",
+      "checkpoint_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/checkpoints/deepar_data_tim_milan_10min_trainable_200_best.pt",
+      "max_iterations": 96960,
+      "patience_iterations": 9696,
+      "validate_epochs": 1,
+      "validate_every": 3232,
+      "train_window_step": 6,
+      "training_schedule": {
+        "steps_per_epoch": 3232,
+        "dense_train_windows": 1211600,
+        "train_windows": 206800,
+        "schedule_ratio": 0.17068339385935952,
+        "log_every": 646
+      },
+      "deepar_likelihood": "gaussian",
+      "deepar_num_samples": 200,
+      "tft_num_heads": null,
+      "monitor_metrics": {
+        "monitor_val_loss": 2.0688983651629664,
+        "monitor_val_rmse": 6.56188369273646,
+        "val": {
+          "rmse_q50": 6.56188369273646,
+          "pinball_q50": 1.652374262633147,
+          "pinball_q95": 0.9688127242194282,
+          "coverage_q95": 0.6411516203703703,
+          "interval_width_mean": 2.9968517840350115
+        },
+        "best_val": 2.532731926529496,
+        "last_iteration": 45248,
+        "monitor": "pinball"
+      },
+      "canonical_metrics": {}
+    },
+    "tft": {
+      "history_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/training/tft_history.json",
+      "checkpoint_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/checkpoints/tft_data_tim_milan_10min_trainable_200_best.pt",
+      "max_iterations": 94710,
+      "patience_iterations": 9471,
+      "validate_epochs": 1,
+      "validate_every": 3157,
+      "train_window_step": 6,
+      "training_schedule": {
+        "steps_per_epoch": 3157,
+        "dense_train_windows": 1211600,
+        "train_windows": 202000,
+        "schedule_ratio": 0.16672169032684053,
+        "log_every": 631
+      },
+      "deepar_likelihood": null,
+      "deepar_num_samples": null,
+      "tft_num_heads": 4,
+      "monitor_metrics": {
+        "monitor_val_loss": 0.7411326598702815,
+        "monitor_val_rmse": 5.905675386931813,
+        "val": {
+          "rmse_q50": 5.905675386931813,
+          "pinball_q50": 1.1338081098485877,
+          "pinball_q95": 0.34758967841113053,
+          "coverage_q95": 0.9061805555555555,
+          "interval_width_mean": 3.9143447847719544
+        },
+        "best_val": 1.3573243135876125,
+        "last_iteration": 12628,
+        "monitor": "pinball"
+      },
+      "canonical_metrics": {}
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "manifest_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/manifest.json",
+  "cadence": "10min",
+  "context_length": 144,
+  "horizon": 48,
+  "quantiles": [
+    0.5,
+    0.95
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "model": "seasonal_naive",
+  "split": "test",
+  "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+  "context_length": 144,
+  "horizon": 48,
+  "quantiles": [
+    0.5,
+    0.95
+  ],
+  "device": "mps",
+  "num_windows_total": 7400,
+  "rmse_q50": 7.262977899848634,
+  "pinball_q50": 1.4049794144208432,
+  "pinball_q95": 0.4889349063532856,
+  "coverage_q95": 0.8578096846846847,
+  "interval_width_mean": 4.497222228911491,
+  "window_policy": {
+    "type": "non_overlapping",
+    "anchor": "split_start",
+    "window_step": 48,
+    "max_windows_per_series": null
+  }
+}

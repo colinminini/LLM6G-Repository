@@ -1,0 +1,13 @@
+{
+  "model": "deepar",
+  "split": "test",
+  "selected_calibrator": "global_median_offset",
+  "selection_rule": "best_val_mae_cp",
+  "timestamp_utc": "2026-03-23T21:30:40.668367+00:00",
+  "num_windows_total": 7400,
+  "MAE_CP": 7.161891891891892,
+  "tolerance": 3,
+  "tolerance_hit_rate": 0.42648648648648646,
+  "coverage_rate": 0.8018097323128105,
+  "sharpness": -1.0641783120441457
+}

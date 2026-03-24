@@ -1,0 +1,24 @@
+{
+  "model": "lstm",
+  "split": "test",
+  "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+  "context_length": 144,
+  "horizon": 48,
+  "quantiles": [
+    0.5,
+    0.95
+  ],
+  "device": "mps",
+  "num_windows_total": 7400,
+  "rmse_q50": 5.683937829142004,
+  "pinball_q50": 1.3889972063052491,
+  "pinball_q95": 0.3853090305771236,
+  "coverage_q95": 0.950563063063063,
+  "interval_width_mean": 5.234860759153962,
+  "window_policy": {
+    "type": "non_overlapping",
+    "anchor": "split_start",
+    "window_step": 48,
+    "max_windows_per_series": null
+  }
+}

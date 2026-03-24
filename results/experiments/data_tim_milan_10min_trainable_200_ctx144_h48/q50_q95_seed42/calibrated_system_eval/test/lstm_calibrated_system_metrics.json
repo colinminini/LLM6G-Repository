@@ -1,0 +1,13 @@
+{
+  "model": "lstm",
+  "split": "test",
+  "selected_calibrator": "global_median_offset",
+  "selection_rule": "best_val_mae_cp",
+  "timestamp_utc": "2026-03-23T21:30:39.799525+00:00",
+  "num_windows_total": 7400,
+  "MAE_CP": 7.174594594594595,
+  "tolerance": 3,
+  "tolerance_hit_rate": 0.4871621621621622,
+  "coverage_rate": 0.983800437856902,
+  "sharpness": 2.79428695283039
+}

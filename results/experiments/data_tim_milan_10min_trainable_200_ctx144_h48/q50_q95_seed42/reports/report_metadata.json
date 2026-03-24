@@ -1,0 +1,110 @@
+{
+  "forecast_metrics": {
+    "interval_width_mean": {
+      "label": "Forecast Interval Width",
+      "definition": "Mean one-sided forecast margin mean(q95 - q50) over all forecast horizon steps and windows."
+    }
+  },
+  "dataset": {
+    "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+    "timestamp_col": "timestamp",
+    "cadence": "10min",
+    "num_rows": 8928,
+    "num_series": 200
+  },
+  "calibrated_system_eval": {
+    "comparison_csv": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/calibrated_system_eval_comparison.csv",
+    "rows": [
+      {
+        "model": "lstm",
+        "split": "test",
+        "selected_calibrator": "global_median_offset",
+        "selection_rule": "best_val_mae_cp",
+        "raw_MAE_CP": 7.174594594594595,
+        "calibrated_MAE_CP": 7.174594594594595,
+        "delta_MAE_CP": 0.0,
+        "raw_tolerance_hit_rate": 0.4871621621621622,
+        "calibrated_tolerance_hit_rate": 0.4871621621621622,
+        "delta_tolerance_hit_rate": 0.0,
+        "raw_coverage_rate": 0.983800437856902,
+        "calibrated_coverage_rate": 0.983800437856902,
+        "delta_coverage_rate": 0.0,
+        "raw_sharpness": 2.79428695283039,
+        "calibrated_sharpness": 2.79428695283039,
+        "delta_sharpness": 0.0
+      },
+      {
+        "model": "deepar",
+        "split": "test",
+        "selected_calibrator": "global_median_offset",
+        "selection_rule": "best_val_mae_cp",
+        "raw_MAE_CP": 7.161891891891892,
+        "calibrated_MAE_CP": 7.161891891891892,
+        "delta_MAE_CP": 0.0,
+        "raw_tolerance_hit_rate": 0.4264864864864864,
+        "calibrated_tolerance_hit_rate": 0.4264864864864864,
+        "delta_tolerance_hit_rate": 0.0,
+        "raw_coverage_rate": 0.8018097323128105,
+        "calibrated_coverage_rate": 0.8018097323128105,
+        "delta_coverage_rate": 0.0,
+        "raw_sharpness": -1.0641783120441457,
+        "calibrated_sharpness": -1.0641783120441457,
+        "delta_sharpness": 0.0
+      },
+      {
+        "model": "tft",
+        "split": "test",
+        "selected_calibrator": "global_median_offset",
+        "selection_rule": "best_val_mae_cp",
+        "raw_MAE_CP": 7.385675675675675,
+        "calibrated_MAE_CP": 7.385675675675675,
+        "delta_MAE_CP": 0.0,
+        "raw_tolerance_hit_rate": 0.4616216216216216,
+        "calibrated_tolerance_hit_rate": 0.4616216216216216,
+        "delta_tolerance_hit_rate": 0.0,
+        "raw_coverage_rate": 0.968115328992872,
+        "calibrated_coverage_rate": 0.968115328992872,
+        "delta_coverage_rate": 0.0,
+        "raw_sharpness": 2.094668781344695,
+        "calibrated_sharpness": 2.094668781344695,
+        "delta_sharpness": 0.0
+      },
+      {
+        "model": "chronos2",
+        "split": "test",
+        "selected_calibrator": "global_median_offset",
+        "selection_rule": "best_val_mae_cp",
+        "raw_MAE_CP": 7.415405405405405,
+        "calibrated_MAE_CP": 7.415405405405405,
+        "delta_MAE_CP": 0.0,
+        "raw_tolerance_hit_rate": 0.4201351351351351,
+        "calibrated_tolerance_hit_rate": 0.4201351351351351,
+        "delta_tolerance_hit_rate": 0.0,
+        "raw_coverage_rate": 0.8733244542508132,
+        "calibrated_coverage_rate": 0.8733244542508132,
+        "delta_coverage_rate": 0.0,
+        "raw_sharpness": 1.148236285792555,
+        "calibrated_sharpness": 1.148236285792555,
+        "delta_sharpness": 0.0
+      },
+      {
+        "model": "seasonal_naive",
+        "split": "test",
+        "selected_calibrator": "global_median_offset",
+        "selection_rule": "best_val_mae_cp",
+        "raw_MAE_CP": 7.332972972972973,
+        "calibrated_MAE_CP": 7.332972972972973,
+        "delta_MAE_CP": 0.0,
+        "raw_tolerance_hit_rate": 0.4267567567567568,
+        "calibrated_tolerance_hit_rate": 0.4267567567567568,
+        "delta_tolerance_hit_rate": 0.0,
+        "raw_coverage_rate": 0.973305590963914,
+        "calibrated_coverage_rate": 0.973305590963914,
+        "delta_coverage_rate": 0.0,
+        "raw_sharpness": 4.879403294570908,
+        "calibrated_sharpness": 4.879403294570908,
+        "delta_sharpness": 0.0
+      }
+    ]
+  }
+}

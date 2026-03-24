@@ -1,0 +1,37 @@
+{
+  "timestamp_utc": "2026-03-23T21:30:39.313767+00:00",
+  "forecast_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/forecast_eval",
+  "tau_calibration_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/tau_calibration",
+  "raw_system_eval_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/system_eval",
+  "selection_rule": "best_val_mae_cp",
+  "splits": {
+    "test": {
+      "lstm": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/lstm_calibrated_system_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/lstm_calibrated_system_metrics.json",
+        "selected_calibrator": "global_median_offset"
+      },
+      "deepar": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/deepar_calibrated_system_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/deepar_calibrated_system_metrics.json",
+        "selected_calibrator": "global_median_offset"
+      },
+      "tft": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/tft_calibrated_system_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/tft_calibrated_system_metrics.json",
+        "selected_calibrator": "global_median_offset"
+      },
+      "chronos2": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/chronos2_calibrated_system_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/chronos2_calibrated_system_metrics.json",
+        "selected_calibrator": "global_median_offset"
+      },
+      "seasonal_naive": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/seasonal_naive_calibrated_system_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/test/seasonal_naive_calibrated_system_metrics.json",
+        "selected_calibrator": "global_median_offset"
+      }
+    }
+  },
+  "comparison_csv": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/calibrated_system_eval/calibrated_system_eval_comparison.csv"
+}

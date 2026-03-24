@@ -402,12 +402,24 @@ def build_system_eval_report(experiment_dir: str | Path, splits: Sequence[str] |
             continue
         rows = [json.loads(path.read_text()) for path in metrics_paths]
         df = pd.DataFrame(rows).sort_values("model")
+        # compute relative_sharpness from windows CSV if not in summary JSON
+        if "relative_sharpness" not in df.columns:
+            rel_vals = []
+            for _, row in df.iterrows():
+                windows_path = system_dir / split / f"{row['model']}_system_windows.csv"
+                if windows_path.exists():
+                    wdf = pd.read_csv(windows_path, usecols=["sharpness", "actual_interval_max"])
+                    valid = wdf[wdf["actual_interval_max"] > 0]
+                    rel_vals.append((valid["sharpness"] / valid["actual_interval_max"]).mean())
+                else:
+                    rel_vals.append(float("nan"))
+            df["relative_sharpness"] = rel_vals
         fig, axes = plt.subplots(2, 2, figsize=(10, 6))
         metrics = [
             ("MAE_CP", "MAE CP"),
             ("tolerance_hit_rate", "Tolerance Hit Rate"),
             ("coverage_rate", "Coverage Rate"),
-            ("sharpness", "Sharpness"),
+            ("relative_sharpness", "Relative Sharpness"),
         ]
         for ax, (key, title) in zip(axes.reshape(-1), metrics):
             ax.bar(df["model"], df[key], color="#ff7f0e")
@@ -648,13 +660,18 @@ def build_calibrated_system_eval_report(
         ("MAE_CP", "MAE CP"),
         ("tolerance_hit_rate", "Tolerance Hit Rate"),
         ("coverage_rate", "Coverage Rate"),
-        ("sharpness", "Sharpness"),
+        ("relative_sharpness", "Relative Sharpness"),
     ]
     x = np.arange(len(subset))
     width = 0.36
     for ax, (metric_key, title) in zip(axes.reshape(-1), metric_specs):
-        raw_values = subset[f"raw_{metric_key}"].to_numpy(dtype=float)
-        calibrated_values = subset[f"calibrated_{metric_key}"].to_numpy(dtype=float)
+        raw_col = f"raw_{metric_key}"
+        cal_col = f"calibrated_{metric_key}"
+        # fall back to absolute sharpness if relative not present
+        if metric_key == "relative_sharpness" and raw_col not in subset.columns:
+            raw_col, cal_col = "raw_sharpness", "calibrated_sharpness"
+        raw_values = subset[raw_col].to_numpy(dtype=float)
+        calibrated_values = subset[cal_col].to_numpy(dtype=float)
         ax.bar(x - width / 2, raw_values, width=width, label="raw", color="#7f7f7f")
         ax.bar(x + width / 2, calibrated_values, width=width, label="calibrated", color="#2ca02c")
         if metric_key == "coverage_rate":

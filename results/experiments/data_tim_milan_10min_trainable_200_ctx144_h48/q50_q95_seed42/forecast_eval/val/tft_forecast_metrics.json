@@ -1,0 +1,24 @@
+{
+  "model": "tft",
+  "split": "val",
+  "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+  "context_length": 144,
+  "horizon": 48,
+  "quantiles": [
+    0.5,
+    0.95
+  ],
+  "device": "mps",
+  "num_windows_total": 3600,
+  "rmse_q50": 5.561610428424151,
+  "pinball_q50": 1.1292283930872438,
+  "pinball_q95": 0.31539196936910535,
+  "coverage_q95": 0.9502604166666667,
+  "interval_width_mean": 4.783954286412508,
+  "window_policy": {
+    "type": "non_overlapping",
+    "anchor": "split_start",
+    "window_step": 48,
+    "max_windows_per_series": null
+  }
+}

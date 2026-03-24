@@ -1,0 +1,32 @@
+{
+  "timestamp_utc": "2026-03-23T21:30:35.016306+00:00",
+  "data_path": "data/data_tim_milan_10min_trainable_200.csv",
+  "forecast_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/forecast_eval",
+  "forecast_cache_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/tau_calibration/forecast_cache",
+  "output_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/tau_calibration",
+  "models": [
+    "lstm",
+    "deepar",
+    "tft",
+    "chronos2",
+    "seasonal_naive"
+  ],
+  "tolerance": 3,
+  "coverage_target": 0.95,
+  "cp_config_manifest": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/cp_sweep/train/cp_sweep_manifest.json",
+  "cp_detector": {
+    "cp_detector": "clasp",
+    "cp_model": "normal",
+    "cp_penalty": 10.0,
+    "cp_min_size": 8,
+    "cp_jump": 1,
+    "cp_period_length": "auto",
+    "cp_exclusion_radius": 0.05,
+    "cp_score_threshold": 0.5
+  },
+  "summary_csv": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/tau_calibration/tau_calibration_summary.csv",
+  "best_test_rows_csv": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/tau_calibration/tau_calibration_best_test_rows.csv",
+  "test_predictions_csv": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/tau_calibration/tau_calibration_predictions.csv",
+  "test_only_predictions_csv": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/tau_calibration/tau_calibration_test_predictions.csv",
+  "feature_importances_csv": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q95_seed42/tau_calibration/tau_calibration_feature_importances.csv"
+}

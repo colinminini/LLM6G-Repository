@@ -151,6 +151,7 @@ def main() -> None:
             resolved_tol_hits: list[float] = []
             conditional_tol_hits: list[float] = []
             sharpness_values: list[float] = []
+            rel_sharpness_values: list[float] = []
             coverage_hits_total = 0
             coverage_count_total = 0
             has_break_pred: list[bool] = []
@@ -193,6 +194,8 @@ def main() -> None:
                 actual_max = float(np.max(true_interval))
                 sharpness = float(safe_ceiling - actual_max)
                 sharpness_values.append(sharpness)
+                rel_sharpness = float(sharpness / actual_max) if actual_max > 0 else float("nan")
+                rel_sharpness_values.append(rel_sharpness)
 
                 rows.append(
                     {
@@ -225,6 +228,7 @@ def main() -> None:
                         "safe_ceiling": safe_ceiling,
                         "actual_interval_max": actual_max,
                         "sharpness": sharpness,
+                        "relative_sharpness": rel_sharpness,
                         "coverage_hits": coverage_hits,
                         "coverage_count": coverage_count,
                         "coverage_window": float(coverage_hits / coverage_count) if coverage_count else float("nan"),
@@ -260,6 +264,7 @@ def main() -> None:
                 "break_f1": float(break_metrics["f1"]),
                 "coverage_rate": float(coverage_hits_total / coverage_count_total) if coverage_count_total else float("nan"),
                 "sharpness": float(np.mean(sharpness_values)) if sharpness_values else float("nan"),
+                "relative_sharpness": float(np.nanmean(rel_sharpness_values)) if rel_sharpness_values else float("nan"),
                 "cp_detector": detector_config,
             }
             model_windows_path = split_dir / f"{model_name}_system_windows.csv"

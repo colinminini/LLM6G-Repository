@@ -1,0 +1,24 @@
+{
+  "model": "chronos2",
+  "split": "train",
+  "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+  "context_length": 144,
+  "horizon": 48,
+  "quantiles": [
+    0.5,
+    0.95
+  ],
+  "device": "mps",
+  "num_windows_total": 10000,
+  "rmse_q50": 9.321243374738785,
+  "pinball_q50": 2.242094554952324,
+  "pinball_q95": 0.8924218075991576,
+  "coverage_q95": 0.8827229166666667,
+  "interval_width_mean": 10.38242756807357,
+  "window_policy": {
+    "type": "non_overlapping",
+    "anchor": "split_start",
+    "window_step": 48,
+    "max_windows_per_series": null
+  }
+}

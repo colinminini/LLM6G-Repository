@@ -4,6 +4,7 @@ data/histo/histo_trafic_instant.csv
 data/processed
 Notes_Projet_LLM6G.txt
 *.pyc
+.claude
 .DS_Store
 .ipynb_checkpoints
 data/datasets/data_instant_test.csv
@@ -20,6 +21,6 @@ results/plots/*
 !results/plots/readme/**
 **/events.out.tfevents.*
 paper/
-tests/
 references/
 prompt.txt
+uncommitted/

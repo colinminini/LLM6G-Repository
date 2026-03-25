@@ -58,7 +58,7 @@ class WindowSample:
     y_pred_median: np.ndarray
     y_pred_95: np.ndarray
     tau_pred: int
-    tau_true: int
+    tau_ref: int
     safe_ceiling_raw: float
 
 
@@ -291,7 +291,7 @@ def _load_samples(
             )
 
         tau_pred = resolve_tau(detector.detect_change_point(y50).tau, horizon)
-        tau_true = resolve_tau(detector.detect_change_point(future_true).tau, horizon)
+        tau_ref = resolve_tau(detector.detect_change_point(future_true).tau, horizon)
         safe_ceiling_raw = safe_ceiling_from_tau(y95, tau_pred, horizon)
 
         samples.append(
@@ -308,7 +308,7 @@ def _load_samples(
                 y_pred_median=y50,
                 y_pred_95=y95,
                 tau_pred=tau_pred,
-                tau_true=tau_true,
+                tau_ref=tau_ref,
                 safe_ceiling_raw=safe_ceiling_raw,
             )
         )
@@ -348,8 +348,8 @@ def _build_feature_table(samples: list[WindowSample], series_stats: dict[str, di
             "start_index": int(sample.start_index),
             "horizon": int(sample.horizon),
             "tau_pred_raw": int(sample.tau_pred),
-            "tau_true": int(sample.tau_true),
-            "delta_true": int(sample.tau_true - sample.tau_pred),
+            "tau_ref": int(sample.tau_ref),
+            "delta_true": int(sample.tau_ref - sample.tau_pred),
             "tau_pred_norm": float(sample.tau_pred / max(1, sample.horizon)),
             "tau_pred_is_horizon": float(sample.tau_pred >= sample.horizon),
             "tau_pred_is_zero": float(sample.tau_pred == 0),
@@ -397,9 +397,9 @@ def _evaluate_predictions(
     tau_corr: np.ndarray,
     tolerance: int,
 ) -> dict[str, float]:
-    tau_true = df["tau_true"].to_numpy(dtype=int)
+    tau_ref = df["tau_ref"].to_numpy(dtype=int)
     horizon = df["horizon"].to_numpy(dtype=int)
-    cp_errors = np.abs(tau_corr - tau_true)
+    cp_errors = np.abs(tau_corr - tau_ref)
     tol_hits = cp_errors <= int(tolerance)
 
     coverage_hits_total = 0
@@ -411,7 +411,7 @@ def _evaluate_predictions(
         safe_ceiling = safe_ceiling_from_tau(y95, int(tau_hat), int(row.horizon))
         true_interval = extract_pre_change_interval(
             future_true,
-            tau=int(row.tau_true),
+            tau=int(row.tau_ref),
             horizon=int(row.horizon),
         )
         coverage_hits_total += int(np.sum(true_interval <= safe_ceiling))
@@ -426,7 +426,7 @@ def _evaluate_predictions(
     return {
         "MAE_CP": float(np.mean(cp_errors)),
         "tolerance_hit_rate": float(np.mean(tol_hits)),
-        "mean_signed_error": float(np.mean(tau_corr - tau_true)),
+        "mean_signed_error": float(np.mean(tau_corr - tau_ref)),
         "coverage_rate": coverage_rate,
         "sharpness": float(np.mean(sharpness_values)) if sharpness_values else float("nan"),
     }
@@ -766,7 +766,7 @@ def main() -> None:
                 "split": split,
                 "horizon": features_df["horizon"],
                 "tau_pred_raw": features_df["tau_pred_raw"],
-                "tau_true": features_df["tau_true"],
+                "tau_ref": features_df["tau_ref"],
                 "safe_ceiling_raw": features_df["safe_ceiling_raw"],
                 "future_true_json": [json.dumps(sample.future_true.tolist()) for sample in samples],
                 "y_pred_95": [json.dumps(sample.y_pred_95.tolist()) for sample in samples],
@@ -783,7 +783,7 @@ def main() -> None:
                 "split",
                 "series",
                 "start_index",
-                "tau_true",
+                "tau_ref",
                 "delta_true",
             }
         ]
@@ -859,7 +859,7 @@ def main() -> None:
                             "start_index": int(meta_row.start_index),
                             "start_timestamp": meta_row.start_timestamp,
                             "tau_pred_raw": int(meta_row.tau_pred_raw),
-                            "tau_true": int(meta_row.tau_true),
+                            "tau_ref": int(meta_row.tau_ref),
                             "delta_hat": float(delta_value),
                             "tau_corrected": int(tau_hat),
                         }

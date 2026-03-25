@@ -211,8 +211,6 @@ def main() -> None:
                         "tau_pred_resolved": int(tau_pred_resolved),
                         "tau_ref": ref_result.tau,
                         "tau_ref_resolved": int(tau_ref_resolved),
-                        "tau_true": ref_result.tau,
-                        "tau_true_resolved": int(tau_ref_resolved),
                         "has_break_pred": int(pred_result.has_break),
                         "has_break_ref": int(ref_result.has_break),
                         "cp_score_pred": pred_result.score,

@@ -163,13 +163,13 @@ def main() -> None:
                 y95 = clamp_upper_quantile(y50, json_array(row.y_pred_95))
                 horizon = int(row.horizon)
                 tau_pred_raw = int(row.tau_pred_raw)
-                tau_true = int(row.tau_true)
+                tau_ref = int(row.tau_ref)
                 tau_corrected = int(row.tau_corrected)
-                cp_abs_error = abs(tau_corrected - tau_true)
+                cp_abs_error = abs(tau_corrected - tau_ref)
                 cp_errors.append(float(cp_abs_error))
                 tol_hits.append(float(cp_abs_error <= tolerance))
 
-                true_interval = extract_pre_change_interval(future_true, tau=tau_true, horizon=horizon)
+                true_interval = extract_pre_change_interval(future_true, tau=tau_ref, horizon=horizon)
                 safe_ceiling = safe_ceiling_from_tau(y95, tau_corrected, horizon)
                 actual_max = float(np.max(true_interval))
                 coverage_hits = int(np.sum(true_interval <= safe_ceiling))
@@ -193,7 +193,7 @@ def main() -> None:
                         "dataset_path": row.dataset_path,
                         "tau_pred_raw": tau_pred_raw,
                         "tau_pred_calibrated": tau_corrected,
-                        "tau_true": tau_true,
+                        "tau_ref": tau_ref,
                         "cp_abs_error": float(cp_abs_error),
                         "tolerance_hit": int(cp_abs_error <= tolerance),
                         "safe_ceiling": safe_ceiling,

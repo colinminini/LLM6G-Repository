@@ -483,7 +483,7 @@ def build_system_example_window_report(
         y50 = _parse_json_series(row["y_pred_median"])
         y95 = _parse_json_series(row["y_pred_95"])
         tau_pred = row.get("tau_pred")
-        tau_ref = row.get("tau_ref", row.get("tau_true"))
+        tau_ref = row.get("tau_ref")
         has_break_pred = bool(int(row.get("has_break_pred", 1))) if not pd.isna(row.get("has_break_pred", 1)) else False
         has_break_ref = bool(int(row.get("has_break_ref", 1))) if not pd.isna(row.get("has_break_ref", 1)) else False
         safe_ceiling = float(row["safe_ceiling"])

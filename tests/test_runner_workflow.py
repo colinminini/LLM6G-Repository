@@ -57,7 +57,7 @@ def _write_example_windows_csv(path: Path, *, include_system_fields: bool = Fals
         row.update(
             {
                 "tau_pred": 1,
-                "tau_true": 1,
+                "tau_ref": 1,
                 "safe_ceiling": 6.5,
             }
         )
@@ -85,7 +85,7 @@ def _write_example_windows_csv_with_rows(
             base_row.update(
                 {
                     "tau_pred": int(row.get("tau_pred", 1)),
-                    "tau_true": int(row.get("tau_true", 1)),
+                    "tau_ref": int(row.get("tau_ref", 1)),
                     "safe_ceiling": float(row.get("safe_ceiling", 6.5)),
                 }
             )
@@ -703,7 +703,7 @@ class RunnerWorkflowTests(unittest.TestCase):
                         "y_pred_median": [0.6, 0.6],
                         "y_pred_95": [0.8, 0.8],
                         "tau_pred": 0,
-                        "tau_true": 1,
+                        "tau_ref": 1,
                         "safe_ceiling": 0.9,
                     },
                     {
@@ -714,7 +714,7 @@ class RunnerWorkflowTests(unittest.TestCase):
                         "y_pred_median": [13.2, 14.1],
                         "y_pred_95": [14.0, 15.0],
                         "tau_pred": 1,
-                        "tau_true": 1,
+                        "tau_ref": 1,
                         "safe_ceiling": 15.0,
                     }
                 ],

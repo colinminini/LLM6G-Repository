@@ -252,16 +252,16 @@ def run_backtest_for_model(
             pred = pipeline.run(history=history, horizon=config.horizon)
             tau_pred = _resolve_tau(pred.tau_pred, config.horizon)
 
-            tau_true_raw = detector.detect_first_change_point(future_true)
-            tau_true = _resolve_tau(tau_true_raw, config.horizon)
+            tau_ref_raw = detector.detect_first_change_point(future_true)
+            tau_ref = _resolve_tau(tau_ref_raw, config.horizon)
 
             true_interval = _extract_pre_change_interval(
                 future_true,
-                tau=tau_true,
+                tau=tau_ref,
                 horizon=config.horizon,
             )
 
-            cp_abs_error = abs(tau_pred - tau_true)
+            cp_abs_error = abs(tau_pred - tau_ref)
             cp_errors.append(float(cp_abs_error))
             tol_hits.append(float(cp_abs_error <= config.tolerance))
 
@@ -284,7 +284,7 @@ def run_backtest_for_model(
                     "start_timestamp": timestamps[start],
                     "horizon": int(config.horizon),
                     "tau_pred": int(tau_pred),
-                    "tau_true": int(tau_true),
+                    "tau_ref": int(tau_ref),
                     "cp_abs_error": float(cp_abs_error),
                     "tolerance_hit": int(cp_abs_error <= config.tolerance),
                     "safe_ceiling": safe_ceiling,

@@ -12,3 +12,5 @@ results/experiments/**/tau_calibration*_predictions.csv
 paper/*
 !paper/main.pdf
 uncommitted/
+references/Reference_Paper.pdf
+V1.pdf

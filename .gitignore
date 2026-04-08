@@ -7,6 +7,7 @@ notes/
 .claude
 data/data_tim*
 data/raw/
+report
 **/events.out.tfevents.*
 results/experiments/**/*_windows.csv
 results/experiments/**/tau_calibration*_predictions.csv
@@ -15,3 +16,4 @@ paper/*
 uncommitted/
 references/Reference_Paper.pdf
 V1.pdf
+llm6g_report.pdf

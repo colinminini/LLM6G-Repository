@@ -4,6 +4,7 @@ __pycache__/
 .DS_Store
 .ipynb_checkpoints
 notes/
+.claude
 data/data_tim*
 data/raw/
 **/events.out.tfevents.*

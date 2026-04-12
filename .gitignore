@@ -14,6 +14,7 @@ results/experiments/**/tau_calibration*_predictions.csv
 paper/*
 slides/
 !paper/main.pdf
+llm6g_*
 uncommitted/
 references/Reference_Paper.pdf
 V1.pdf

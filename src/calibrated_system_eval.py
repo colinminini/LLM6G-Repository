@@ -19,9 +19,12 @@ if __package__ in {None, ""}:
 from src.progress import StageProgressDisplay
 from src.system_metrics import (
     clamp_upper_quantile,
+    covered_sharpness_summary as _covered_sharpness_summary,
     extract_pre_change_interval,
     json_array,
+    ratio_of_means as _ratio_of_means,
     safe_ceiling_from_tau,
+    undercoverage_summary as _undercoverage_summary,
 )
 
 
@@ -39,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forecast-dir", type=Path, required=True)
     parser.add_argument("--tau-calibration-dir", type=Path, required=True)
     parser.add_argument("--raw-system-eval-dir", type=Path, default=None)
-    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive,sarima")
     parser.add_argument("--splits", default="test")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--selection-rule", default="best_val_mae_cp")
@@ -152,6 +155,8 @@ def main() -> None:
             cp_errors: list[float] = []
             tol_hits: list[float] = []
             sharpness_values: list[float] = []
+            actual_max_values: list[float] = []
+            rel_sharpness_values: list[float] = []
             coverage_hits_total = 0
             coverage_count_total = 0
             raw_metrics = _raw_metrics(Path(raw_system_eval_dir), split, model_name)
@@ -169,7 +174,7 @@ def main() -> None:
                 cp_errors.append(float(cp_abs_error))
                 tol_hits.append(float(cp_abs_error <= tolerance))
 
-                true_interval = extract_pre_change_interval(future_true, tau=tau_ref, horizon=horizon)
+                true_interval = extract_pre_change_interval(future_true, tau=tau_corrected, horizon=horizon)
                 safe_ceiling = safe_ceiling_from_tau(y95, tau_corrected, horizon)
                 actual_max = float(np.max(true_interval))
                 coverage_hits = int(np.sum(true_interval <= safe_ceiling))
@@ -178,6 +183,11 @@ def main() -> None:
                 coverage_count_total += coverage_count
                 sharpness = float(safe_ceiling - actual_max)
                 sharpness_values.append(sharpness)
+                actual_max_values.append(actual_max)
+                rel_sharpness = (
+                    float(sharpness / actual_max) if actual_max > 0 else float("nan")
+                )
+                rel_sharpness_values.append(rel_sharpness)
 
                 rows.append(
                     {
@@ -199,6 +209,7 @@ def main() -> None:
                         "safe_ceiling": safe_ceiling,
                         "actual_interval_max": actual_max,
                         "sharpness": sharpness,
+                        "relative_sharpness": rel_sharpness,
                         "coverage_hits": coverage_hits,
                         "coverage_count": coverage_count,
                         "coverage_window": float(coverage_hits / coverage_count) if coverage_count else float("nan"),
@@ -221,6 +232,12 @@ def main() -> None:
                 "tolerance_hit_rate": float(np.mean(tol_hits)) if tol_hits else float("nan"),
                 "coverage_rate": float(coverage_hits_total / coverage_count_total) if coverage_count_total else float("nan"),
                 "sharpness": float(np.mean(sharpness_values)) if sharpness_values else float("nan"),
+                "relative_sharpness": _ratio_of_means(sharpness_values, actual_max_values),
+                "relative_sharpness_mean_of_ratios": (
+                    float(np.nanmean(rel_sharpness_values)) if rel_sharpness_values else float("nan")
+                ),
+                **_covered_sharpness_summary(sharpness_values, actual_max_values),
+                **_undercoverage_summary(sharpness_values, actual_max_values),
             }
             comparison_rows.append(
                 {

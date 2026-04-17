@@ -1,0 +1,29 @@
+{
+  "model": "deepar",
+  "split": "val",
+  "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+  "context_length": 144,
+  "horizon": 48,
+  "quantiles": [
+    0.5,
+    0.99
+  ],
+  "upper_quantile": 0.99,
+  "device": "mps",
+  "num_windows_total": 3600,
+  "rmse_q50": 6.731247425748748,
+  "pinball_q50": 1.6238932275091091,
+  "pinball_q99": 0.35892252722744195,
+  "coverage_q99": 0.8412384259259259,
+  "pinball_q_upper": 0.35892252722744195,
+  "coverage_q_upper": 0.8412384259259259,
+  "pinball_q95": 0.35892252722744195,
+  "coverage_q95": 0.8412384259259259,
+  "interval_width_mean": 5.543728936280666,
+  "window_policy": {
+    "type": "non_overlapping",
+    "anchor": "split_start",
+    "window_step": 48,
+    "max_windows_per_series": null
+  }
+}

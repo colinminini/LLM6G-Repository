@@ -1,0 +1,55 @@
+{
+  "model": "tft",
+  "base_train_flops": 1700809417359360.0,
+  "infer_flops_per_call": 701487360.0,
+  "annual_infer_calls_per_market": 10512000,
+  "annual_infer_flops_per_market": 7374035128320000.0,
+  "headline_markets": 10,
+  "annual_retrain_flops_headline": 6.80323766943744e+16,
+  "annual_total_flops_headline": 1.417727279775744e+17,
+  "annual_energy_J_gpu_headline": 184304.5463708467,
+  "annual_energy_J_cpu_headline": 141772727.9775744,
+  "energy_constants": {
+    "J_per_flop_gpu": 1.3e-12,
+    "J_per_flop_cpu": 1e-09
+  },
+  "scenarios": {
+    "1": {
+      "markets": 1,
+      "annual_retrain_flops": 6803237669437440.0,
+      "annual_infer_flops_total": 7374035128320000.0,
+      "annual_total_flops": 1.417727279775744e+16,
+      "annual_energy_J_gpu": 18430.45463708467,
+      "annual_energy_J_cpu": 14177272.797757441
+    },
+    "10": {
+      "markets": 10,
+      "annual_retrain_flops": 6.80323766943744e+16,
+      "annual_infer_flops_total": 7.37403512832e+16,
+      "annual_total_flops": 1.417727279775744e+17,
+      "annual_energy_J_gpu": 184304.5463708467,
+      "annual_energy_J_cpu": 141772727.9775744
+    },
+    "100": {
+      "markets": 100,
+      "annual_retrain_flops": 6.80323766943744e+17,
+      "annual_infer_flops_total": 7.37403512832e+17,
+      "annual_total_flops": 1.417727279775744e+18,
+      "annual_energy_J_gpu": 1843045.463708467,
+      "annual_energy_J_cpu": 1417727279.7757442
+    }
+  },
+  "arch": {
+    "d_model": 128,
+    "n_heads": 4,
+    "n_layers": 2,
+    "params": 1826790,
+    "params_source": "checkpoint",
+    "tokens": 192,
+    "deployment_days": 365,
+    "retrain_cycles_per_year": 4,
+    "num_series_per_market": 200,
+    "cadence": "10min",
+    "is_trainable": true
+  }
+}

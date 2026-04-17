@@ -43,6 +43,7 @@ from src.reporting import (
     build_system_eval_report,
     build_tau_calibration_report,
     build_training_report,
+    publish_report_plots,
 )
 
 STAGE_ORDER = (
@@ -53,14 +54,15 @@ STAGE_ORDER = (
     "system_eval",
     "tau_calibration",
     "calibrated_system_eval",
+    "energy_eval",
 )
 
 DEFAULT_STAGE_ORDER = (
     "prepare_data",
     "train",
     "forecast_eval",
-    "cp_sweep",
     "system_eval",
+    "energy_eval",
 )
 
 OPTIONAL_TAU_STAGE_ORDER = (
@@ -213,6 +215,17 @@ def _stage_metrics(output_dir: Path, stage: str) -> tuple[dict[str, Any], dict[s
             metrics["comparison_rows"] = pd.read_csv(summary_path).to_dict("records")
         return metrics, build_report_bundle(output_dir)
 
+    if stage == "energy_eval":
+        metrics: dict[str, Any] = {}
+        energy_root = output_dir / "energy"
+        if energy_root.exists():
+            for split_dir in sorted(p for p in energy_root.iterdir() if p.is_dir()):
+                split_metrics: dict[str, Any] = {}
+                for path in sorted(split_dir.glob("*_energy.json")):
+                    split_metrics[path.stem.replace("_energy", "")] = json.loads(path.read_text())
+                metrics[split_dir.name] = split_metrics
+        return metrics, {}
+
     return {}, {}
 
 
@@ -315,7 +328,7 @@ def _build_stage_command(
         )
     if stage == "system_eval":
         cp_manifest = output_dir / "cp_sweep" / "train" / "cp_sweep_manifest.json"
-        return base + [
+        command = base + [
             "src/system_eval.py",
             "--forecast-dir",
             str(output_dir / "forecast_eval"),
@@ -327,9 +340,29 @@ def _build_stage_command(
             str(output_dir / "system_eval"),
             "--tolerance",
             str(args.tolerance),
-            "--cp-config-manifest",
-            str(cp_manifest),
         ]
+        if cp_manifest.exists():
+            command += ["--cp-config-manifest", str(cp_manifest)]
+        else:
+            command += [
+                "--cp-detector",
+                args.cp_detector,
+                "--cp-period-length",
+                str(args.cp_period_length),
+                "--cp-exclusion-radius",
+                str(args.cp_exclusion_radius),
+                "--cp-score-threshold",
+                str(args.cp_score_threshold),
+                "--cp-model",
+                args.cp_model,
+                "--cp-penalty",
+                str(args.cp_penalty),
+                "--cp-min-size",
+                str(args.cp_min_size),
+                "--cp-jump",
+                str(args.cp_jump),
+            ]
+        return command
     if stage == "cp_sweep":
         return base + [
             "src/cp_sweep.py",
@@ -370,7 +403,7 @@ def _build_stage_command(
         )
     if stage == "tau_calibration":
         cp_manifest = output_dir / "cp_sweep" / "train" / "cp_sweep_manifest.json"
-        return base + [
+        command = base + [
             "src/tau_calibration.py",
             "--forecast-dir",
             str(output_dir / "forecast_eval"),
@@ -384,8 +417,10 @@ def _build_stage_command(
             str(args.tolerance),
             "--coverage-target",
             str(args.coverage_target),
-            "--cp-config-manifest",
-            str(cp_manifest),
+        ]
+        if cp_manifest.exists():
+            command += ["--cp-config-manifest", str(cp_manifest)]
+        command += [
             "--cp-detector",
             args.cp_detector,
             "--cp-period-length",
@@ -405,6 +440,7 @@ def _build_stage_command(
             "--random-seed",
             str(args.random_seed),
         ]
+        return command
     if stage == "calibrated_system_eval":
         return base + [
             "src/calibrated_system_eval.py",
@@ -423,6 +459,46 @@ def _build_stage_command(
             "--selection-rule",
             args.tau_selection_rule,
         ]
+    if stage == "energy_eval":
+        return base + [
+            "src/energy_eval.py",
+            "--manifest-path",
+            str(manifest_path),
+            "--forecast-dir",
+            str(output_dir / "forecast_eval"),
+            "--training-dir",
+            str(output_dir / "training"),
+            "--output-dir",
+            str(output_dir / "energy"),
+            "--models",
+            args.models,
+            "--splits",
+            args.system_splits,
+            "--context-length",
+            str(args.context_length),
+            "--horizon",
+            str(args.horizon),
+            "--batch-size",
+            str(args.batch_size),
+            "--hidden-size",
+            str(args.hidden_size),
+            "--num-layers",
+            str(args.num_layers),
+            "--tft-num-heads",
+            str(args.tft_num_heads),
+            "--deepar-num-samples",
+            str(args.deepar_num_samples),
+            "--n-quantiles",
+            str(len(parse_quantiles(args.quantiles))),
+            "--market-scenarios",
+            args.market_scenarios,
+            "--headline-markets",
+            str(args.headline_markets),
+            "--retrain-cycles-per-year",
+            str(args.retrain_cycles_per_year),
+            "--deployment-days",
+            str(args.deployment_days),
+        ]
     raise ValueError(f"Unsupported stage: {stage}")
 
 
@@ -440,12 +516,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timestamp-col", default=DEFAULT_TIMESTAMP_COL)
     parser.add_argument("--context-length", type=int, default=144)
     parser.add_argument("--horizon", type=int, default=48)
-    parser.add_argument("--quantiles", default="0.5,0.95")
+    parser.add_argument("--quantiles", default="0.5,0.99")
     parser.add_argument("--random-seed", type=int, default=DEFAULT_RANDOM_SEED)
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.10)
     parser.add_argument("--test-ratio", type=float, default=0.20)
-    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive,sarima")
     parser.add_argument("--splits", default="val,test")
     parser.add_argument("--system-splits", default="test")
     parser.add_argument("--sampling-mode", choices=("random", "rolling"), default="random")
@@ -470,6 +546,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deepar-likelihood", default=DEFAULT_DEEPAR_LIKELIHOOD, choices=SUPPORTED_DEEPAR_LIKELIHOODS)
     parser.add_argument("--deepar-num-samples", type=int, default=DEFAULT_DEEPAR_NUM_SAMPLES)
     parser.add_argument("--deepar-item-embedding-dim", type=int, default=DEFAULT_DEEPAR_ITEM_EMBEDDING_DIM)
+    parser.add_argument("--market-scenarios", default="1,10,100")
+    parser.add_argument("--headline-markets", type=int, default=10)
+    parser.add_argument("--retrain-cycles-per-year", type=int, default=4)
+    parser.add_argument("--deployment-days", type=int, default=365)
     parser.add_argument("--device", default=AUTO_DEVICE, help=AUTO_DEVICE_HELP)
     parser.add_argument("--tolerance", type=int, default=3)
     parser.add_argument("--cp-detector", default=DEFAULT_CP_DETECTOR)
@@ -576,6 +656,7 @@ def main() -> None:
             subprocess.run(command, cwd=Path(__file__).resolve().parents[1], check=True)
             metrics, plots = _stage_metrics(output_dir, stage)
             report_bundle = build_report_bundle(output_dir)
+            published_plots = publish_report_plots(output_dir)
             elapsed = time.perf_counter() - start_time
             status_payload["stages"][stage] = {
                 "status": "success",

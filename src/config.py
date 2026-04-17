@@ -8,7 +8,7 @@ from typing import Iterable, Sequence
 
 DEFAULT_DATASET_PATH = Path("data/data_tim_milan_10min_trainable_200.csv")
 DEFAULT_TIMESTAMP_COL = "timestamp"
-DEFAULT_QUANTILES = (0.5, 0.95)
+DEFAULT_QUANTILES = (0.5, 0.99)
 DEFAULT_TRAIN_RATIO = 0.70
 DEFAULT_VAL_RATIO = 0.10
 DEFAULT_TEST_RATIO = 0.20
@@ -32,7 +32,7 @@ DEFAULT_CP_MIN_SIZE = 8
 DEFAULT_CP_JUMP = 1
 DEFAULT_TOLERANCE = 3
 
-SUPPORTED_MAIN_MODELS = ("lstm", "deepar", "tft", "chronos2", "seasonal_naive")
+SUPPORTED_MAIN_MODELS = ("lstm", "deepar", "tft", "chronos2", "seasonal_naive", "sarima")
 TRAINABLE_BASELINE_MODELS = ("lstm", "deepar", "tft")
 LEGACY_MODELS = ("chronos2_finetune",)
 

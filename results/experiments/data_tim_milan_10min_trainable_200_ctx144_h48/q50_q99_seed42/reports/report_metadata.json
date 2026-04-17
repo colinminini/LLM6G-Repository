@@ -1,0 +1,15 @@
+{
+  "forecast_metrics": {
+    "interval_width_mean": {
+      "label": "Forecast Interval Width",
+      "definition": "Mean one-sided forecast margin mean(q95 - q50) over all forecast horizon steps and windows."
+    }
+  },
+  "dataset": {
+    "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+    "timestamp_col": "timestamp",
+    "cadence": "10min",
+    "num_rows": 8928,
+    "num_series": 200
+  }
+}

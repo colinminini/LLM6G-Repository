@@ -223,7 +223,7 @@ def _materialize_train_forecast_cache(
             continue
 
         checkpoint_path = None
-        if model_name not in {"chronos2", "seasonal_naive"}:
+        if model_name not in {"chronos2", "seasonal_naive", "sarima"}:
             checkpoint_path = (
                 forecast_dir.parent
                 / "checkpoints"
@@ -332,7 +332,7 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--forecast-dir", type=Path, required=True)
-    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive,sarima")
     parser.add_argument("--split", default="train")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--train-window-step", type=int, default=1)

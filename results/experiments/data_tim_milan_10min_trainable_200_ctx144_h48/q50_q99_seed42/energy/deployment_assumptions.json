@@ -1,0 +1,35 @@
+{
+  "manifest_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/manifest.json",
+  "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+  "cadence": "10min",
+  "context_length": 144,
+  "horizon": 48,
+  "quantiles": [
+    0.5,
+    0.99
+  ],
+  "num_series_per_market": 200,
+  "live_calls_per_series_per_day": 144,
+  "annual_infer_calls_per_series": 52560,
+  "annual_infer_calls_per_market": 10512000,
+  "deployment_days": 365,
+  "retrain_cycles_per_year": 4,
+  "market_scenarios": [
+    1,
+    10,
+    100
+  ],
+  "headline_markets": 10,
+  "trainable_models": [
+    "lstm",
+    "deepar",
+    "tft"
+  ],
+  "models": [
+    "lstm",
+    "deepar",
+    "tft",
+    "chronos2",
+    "seasonal_naive"
+  ]
+}

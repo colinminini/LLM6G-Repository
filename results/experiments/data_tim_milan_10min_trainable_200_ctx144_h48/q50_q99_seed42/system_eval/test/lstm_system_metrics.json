@@ -1,0 +1,33 @@
+{
+  "model": "lstm",
+  "split": "test",
+  "timestamp_utc": "2026-04-17T09:54:26.728488+00:00",
+  "num_windows_total": 7400,
+  "MAE_CP": 7.216486486486486,
+  "tau_mae_when_both_break": 7.216486486486486,
+  "tolerance": 3,
+  "tolerance_hit_rate": 0.29094594594594597,
+  "tolerance_hit_rate_when_both_break": 0.29094594594594597,
+  "break_precision": 1.0,
+  "break_recall": 1.0,
+  "break_f1": 1.0,
+  "coverage_rate": 0.99875372723106,
+  "sharpness": 9.595716737228834,
+  "relative_sharpness": 0.5372884002925816,
+  "relative_sharpness_mean_of_ratios": 0.6307710554376811,
+  "sharpness_covered": 9.75316736350283,
+  "relative_sharpness_covered": 0.548762592798584,
+  "covered_window_frac": 0.9872972972972973,
+  "undercoverage_window_frac": 0.012702702702702703,
+  "undercoverage_severity": 0.10746644922843869,
+  "cp_detector": {
+    "cp_detector": "clasp",
+    "cp_model": "normal",
+    "cp_penalty": 10.0,
+    "cp_min_size": 8,
+    "cp_jump": 1,
+    "cp_period_length": "16",
+    "cp_exclusion_radius": 0.05,
+    "cp_score_threshold": 0.5
+  }
+}

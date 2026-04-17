@@ -363,7 +363,7 @@ def parse_args() -> argparse.Namespace:
             "Rolling-window backtest for probabilistic forecast + change-point + safe-ceiling evaluation."
         )
     )
-    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive,sarima")
     parser.add_argument("--timestamp-col", default="timestamp")
     parser.add_argument(
         "--data-path",
@@ -382,8 +382,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-length", type=int, default=128)
     parser.add_argument(
         "--forecaster-quantiles",
-        default="0.5,0.95",
-        help="Comma-separated quantile levels expected from quantile models (e.g., 0.5,0.95).",
+        default="0.5,0.99",
+        help="Comma-separated quantile levels expected from quantile models (e.g., 0.5,0.99).",
     )
     parser.add_argument(
         "--chronos-num-samples",

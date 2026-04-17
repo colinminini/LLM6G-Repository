@@ -1,0 +1,52 @@
+{
+  "model": "chronos2",
+  "base_train_flops": 0.0,
+  "infer_flops_per_call": 2880000000.0,
+  "annual_infer_calls_per_market": 10512000,
+  "annual_infer_flops_per_market": 3.027456e+16,
+  "headline_markets": 10,
+  "annual_retrain_flops_headline": 0.0,
+  "annual_total_flops_headline": 3.027456e+17,
+  "annual_energy_J_gpu_headline": 393569.27999999997,
+  "annual_energy_J_cpu_headline": 302745600.0,
+  "energy_constants": {
+    "J_per_flop_gpu": 1.3e-12,
+    "J_per_flop_cpu": 1e-09
+  },
+  "scenarios": {
+    "1": {
+      "markets": 1,
+      "annual_retrain_flops": 0.0,
+      "annual_infer_flops_total": 3.027456e+16,
+      "annual_total_flops": 3.027456e+16,
+      "annual_energy_J_gpu": 39356.928,
+      "annual_energy_J_cpu": 30274560.000000004
+    },
+    "10": {
+      "markets": 10,
+      "annual_retrain_flops": 0.0,
+      "annual_infer_flops_total": 3.027456e+17,
+      "annual_total_flops": 3.027456e+17,
+      "annual_energy_J_gpu": 393569.27999999997,
+      "annual_energy_J_cpu": 302745600.0
+    },
+    "100": {
+      "markets": 100,
+      "annual_retrain_flops": 0.0,
+      "annual_infer_flops_total": 3.027456e+18,
+      "annual_total_flops": 3.027456e+18,
+      "annual_energy_J_gpu": 3935692.8,
+      "annual_energy_J_cpu": 3027456000.0
+    }
+  },
+  "arch": {
+    "params": 120000000,
+    "patch": 16,
+    "tokens": 12,
+    "deployment_days": 365,
+    "retrain_cycles_per_year": 4,
+    "num_series_per_market": 200,
+    "cadence": "10min",
+    "is_trainable": false
+  }
+}

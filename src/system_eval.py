@@ -32,10 +32,13 @@ from src.progress import StageProgressDisplay
 from src.system_metrics import (
     binary_classification_metrics,
     clamp_upper_quantile,
+    covered_sharpness_summary as _covered_sharpness_summary,
     extract_pre_change_interval,
     json_array,
+    ratio_of_means as _ratio_of_means,
     resolve_tau,
     safe_ceiling_from_tau,
+    undercoverage_summary as _undercoverage_summary,
 )
 
 
@@ -50,7 +53,7 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--forecast-dir", type=Path, required=True)
-    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive,sarima")
     parser.add_argument("--splits", default="test")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--tolerance", type=int, default=DEFAULT_TOLERANCE)
@@ -151,6 +154,7 @@ def main() -> None:
             resolved_tol_hits: list[float] = []
             conditional_tol_hits: list[float] = []
             sharpness_values: list[float] = []
+            actual_max_values: list[float] = []
             rel_sharpness_values: list[float] = []
             coverage_hits_total = 0
             coverage_count_total = 0
@@ -183,7 +187,7 @@ def main() -> None:
 
                 true_interval = extract_pre_change_interval(
                     future_true,
-                    tau=ref_result.tau,
+                    tau=pred_result.tau,
                     horizon=horizon,
                 )
                 safe_ceiling = safe_ceiling_from_tau(y95, pred_result.tau, horizon)
@@ -194,6 +198,7 @@ def main() -> None:
                 actual_max = float(np.max(true_interval))
                 sharpness = float(safe_ceiling - actual_max)
                 sharpness_values.append(sharpness)
+                actual_max_values.append(actual_max)
                 rel_sharpness = float(sharpness / actual_max) if actual_max > 0 else float("nan")
                 rel_sharpness_values.append(rel_sharpness)
 
@@ -262,7 +267,19 @@ def main() -> None:
                 "break_f1": float(break_metrics["f1"]),
                 "coverage_rate": float(coverage_hits_total / coverage_count_total) if coverage_count_total else float("nan"),
                 "sharpness": float(np.mean(sharpness_values)) if sharpness_values else float("nan"),
-                "relative_sharpness": float(np.nanmean(rel_sharpness_values)) if rel_sharpness_values else float("nan"),
+                # relative_sharpness is now ratio-of-means: Σ(safe_ceiling - actual_max) / Σ(actual_max),
+                # aggregation-consistent with coverage_rate (also a ratio-of-sums). The prior mean-of-ratios
+                # is retained as relative_sharpness_mean_of_ratios for reproducibility of older artefacts.
+                "relative_sharpness": _ratio_of_means(sharpness_values, actual_max_values),
+                "relative_sharpness_mean_of_ratios": (
+                    float(np.nanmean(rel_sharpness_values)) if rel_sharpness_values else float("nan")
+                ),
+                # Sharpness conditional on full coverage (safe_ceiling >= actual_max): pure over-provisioning
+                # slack — the "excess reserved capacity" a controller holds when it is actually covering.
+                **_covered_sharpness_summary(sharpness_values, actual_max_values),
+                # Undercoverage diagnostics decouple "how often the ceiling is too low" from the signed
+                # ratio that the mean-of-ratios bundles together.
+                **_undercoverage_summary(sharpness_values, actual_max_values),
                 "cp_detector": detector_config,
             }
             model_windows_path = split_dir / f"{model_name}_system_windows.csv"

@@ -1,0 +1,60 @@
+{
+  "timestamp_utc": "2026-04-17T09:53:23.722149+00:00",
+  "manifest_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/manifest.json",
+  "device": "mps",
+  "chronos_model_id": "amazon/chronos-2",
+  "chronos_num_samples": 100,
+  "deepar_num_samples": 200,
+  "window_policy": {
+    "type": "non_overlapping",
+    "anchor": "split_start",
+    "window_step": 48,
+    "max_windows_per_series": null
+  },
+  "splits": {
+    "val": {
+      "lstm": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/lstm_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/lstm_forecast_metrics.json"
+      },
+      "deepar": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/deepar_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/deepar_forecast_metrics.json"
+      },
+      "tft": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/tft_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/tft_forecast_metrics.json"
+      },
+      "chronos2": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/chronos2_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/chronos2_forecast_metrics.json"
+      },
+      "seasonal_naive": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/seasonal_naive_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/val/seasonal_naive_forecast_metrics.json"
+      }
+    },
+    "test": {
+      "lstm": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/lstm_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/lstm_forecast_metrics.json"
+      },
+      "deepar": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/deepar_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/deepar_forecast_metrics.json"
+      },
+      "tft": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/tft_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/tft_forecast_metrics.json"
+      },
+      "chronos2": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/chronos2_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/chronos2_forecast_metrics.json"
+      },
+      "seasonal_naive": {
+        "windows_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/seasonal_naive_forecast_windows.csv",
+        "metrics_path": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval/test/seasonal_naive_forecast_metrics.json"
+      }
+    }
+  }
+}

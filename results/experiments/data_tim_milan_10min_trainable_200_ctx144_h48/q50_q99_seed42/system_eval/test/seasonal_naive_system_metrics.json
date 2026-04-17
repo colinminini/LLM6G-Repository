@@ -1,0 +1,33 @@
+{
+  "model": "seasonal_naive",
+  "split": "test",
+  "timestamp_utc": "2026-04-17T09:54:44.182462+00:00",
+  "num_windows_total": 7400,
+  "MAE_CP": 7.332972972972973,
+  "tau_mae_when_both_break": 7.332972972972973,
+  "tolerance": 3,
+  "tolerance_hit_rate": 0.4267567567567568,
+  "tolerance_hit_rate_when_both_break": 0.4267567567567568,
+  "break_precision": 1.0,
+  "break_recall": 1.0,
+  "break_f1": 1.0,
+  "coverage_rate": 0.9893628469960521,
+  "sharpness": 6.8833273965354485,
+  "relative_sharpness": 0.39279601382672946,
+  "relative_sharpness_mean_of_ratios": 0.36166399731040977,
+  "sharpness_covered": 7.666377146455532,
+  "relative_sharpness_covered": 0.4334291472504025,
+  "covered_window_frac": 0.9147297297297298,
+  "undercoverage_window_frac": 0.08527027027027027,
+  "undercoverage_severity": 0.09620096089941811,
+  "cp_detector": {
+    "cp_detector": "clasp",
+    "cp_model": "normal",
+    "cp_penalty": 10.0,
+    "cp_min_size": 8,
+    "cp_jump": 1,
+    "cp_period_length": "16",
+    "cp_exclusion_radius": 0.05,
+    "cp_score_threshold": 0.5
+  }
+}

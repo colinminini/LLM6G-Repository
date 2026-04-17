@@ -1,0 +1,876 @@
+{
+  "stages": {
+    "prepare_data": {
+      "status": "success",
+      "started_at_utc": "2026-04-16T19:24:19.795404+00:00",
+      "finished_at_utc": "2026-04-16T19:24:20.257326+00:00",
+      "duration_sec": 0.462,
+      "command": [
+        "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/.venv/bin/python",
+        "src/prepare_data.py",
+        "--data-path",
+        "data/data_tim_milan_10min_trainable_200.csv",
+        "--timestamp-col",
+        "timestamp",
+        "--context-length",
+        "144",
+        "--horizon",
+        "48",
+        "--quantiles",
+        "0.5,0.99",
+        "--random-seed",
+        "42",
+        "--train-ratio",
+        "0.7",
+        "--val-ratio",
+        "0.1",
+        "--test-ratio",
+        "0.2",
+        "--output-dir",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42"
+      ],
+      "metrics": {
+        "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+        "cadence": "10min",
+        "context_length": 144,
+        "horizon": 48,
+        "num_rows": 8928,
+        "num_series": 200
+      },
+      "plots": {
+        "split_summary_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/prepare_data_split_summary.png"
+      },
+      "report_index": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/report_index.json",
+      "published_plots": {
+        "split_summary_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/prepare_data_split_summary.png",
+        "published_report_index": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/published_report_index.json"
+      }
+    },
+    "train": {
+      "status": "success",
+      "started_at_utc": "2026-04-16T19:24:20.257456+00:00",
+      "finished_at_utc": "2026-04-16T20:35:46.583326+00:00",
+      "duration_sec": 4286.314,
+      "command": [
+        "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/.venv/bin/python",
+        "src/train.py",
+        "--manifest-path",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/manifest.json",
+        "--output-dir",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42",
+        "--models",
+        "deepar,lstm,tft",
+        "--batch-size",
+        "64",
+        "--train-window-step",
+        "6",
+        "--learning-rate",
+        "0.001",
+        "--hidden-size",
+        "128",
+        "--num-layers",
+        "2",
+        "--tft-num-heads",
+        "4",
+        "--deepar-likelihood",
+        "gaussian",
+        "--deepar-num-samples",
+        "200",
+        "--deepar-item-embedding-dim",
+        "20",
+        "--device",
+        "mps",
+        "--max-iterations",
+        "5000",
+        "--patience-iterations",
+        "1000",
+        "--validate-epochs",
+        "1",
+        "--max-epochs",
+        "30",
+        "--patience",
+        "3"
+      ],
+      "metrics": {
+        "deepar": {
+          "monitor_val_loss": 2.1886398049823024,
+          "monitor_val_rmse": 6.838777088388032,
+          "val_pinball_q50": 1.6464691155045121
+        },
+        "lstm": {
+          "monitor_val_loss": 0.6749176464059896,
+          "monitor_val_rmse": 6.055740197698248,
+          "val_pinball_q50": 1.2236850526597765
+        },
+        "tft": {
+          "monitor_val_loss": 0.6076355362147615,
+          "monitor_val_rmse": 5.921405589431931,
+          "val_pinball_q50": 1.1095847525420013
+        }
+      },
+      "plots": {
+        "training_loss_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/training_loss.png",
+        "training_rmse_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/training_rmse.png",
+        "training_coverage_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/training_coverage.png",
+        "training_interval_width_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/training_interval_width.png"
+      },
+      "report_index": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/report_index.json",
+      "published_plots": {
+        "split_summary_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/prepare_data_split_summary.png",
+        "training_coverage_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_coverage.png",
+        "training_interval_width_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_interval_width.png",
+        "training_loss_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_loss.png",
+        "training_rmse_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_rmse.png",
+        "published_report_index": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/published_report_index.json"
+      }
+    },
+    "forecast_eval": {
+      "status": "success",
+      "started_at_utc": "2026-04-17T09:53:22.984896+00:00",
+      "finished_at_utc": "2026-04-17T09:54:22.444545+00:00",
+      "duration_sec": 59.46,
+      "command": [
+        "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/.venv/bin/python",
+        "src/forecast_eval.py",
+        "--manifest-path",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/manifest.json",
+        "--output-dir",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42",
+        "--models",
+        "lstm,deepar,tft,chronos2,seasonal_naive",
+        "--splits",
+        "val,test",
+        "--deepar-num-samples",
+        "200",
+        "--device",
+        "mps",
+        "--paired-windows"
+      ],
+      "metrics": {
+        "val": {
+          "chronos2": {
+            "model": "chronos2",
+            "split": "val",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 3600,
+            "rmse_q50": 7.229148198507896,
+            "pinball_q50": 1.6875696475898914,
+            "pinball_q99": 0.17399867770181743,
+            "coverage_q99": 0.9936458333333333,
+            "pinball_q_upper": 0.17399867770181743,
+            "coverage_q_upper": 0.9936458333333333,
+            "pinball_q95": 0.17399867770181743,
+            "coverage_q95": 0.9936458333333333,
+            "interval_width_mean": 15.170162263337385,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          },
+          "deepar": {
+            "model": "deepar",
+            "split": "val",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 3600,
+            "rmse_q50": 6.731247425748748,
+            "pinball_q50": 1.6238932275091091,
+            "pinball_q99": 0.35892252722744195,
+            "coverage_q99": 0.8412384259259259,
+            "pinball_q_upper": 0.35892252722744195,
+            "coverage_q_upper": 0.8412384259259259,
+            "pinball_q95": 0.35892252722744195,
+            "coverage_q95": 0.8412384259259259,
+            "interval_width_mean": 5.543728936280666,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          },
+          "lstm": {
+            "model": "lstm",
+            "split": "val",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 3600,
+            "rmse_q50": 6.488046136555203,
+            "pinball_q50": 1.6656433398914645,
+            "pinball_q99": 0.14678896227439928,
+            "coverage_q99": 0.9961226851851852,
+            "pinball_q_upper": 0.14678896227439928,
+            "coverage_q_upper": 0.9961226851851852,
+            "pinball_q95": 0.14678896227439928,
+            "coverage_q95": 0.9961226851851852,
+            "interval_width_mean": 10.876160337895046,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          },
+          "seasonal_naive": {
+            "model": "seasonal_naive",
+            "split": "val",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 3600,
+            "rmse_q50": 7.587164631577976,
+            "pinball_q50": 1.4726318527717048,
+            "pinball_q99": 0.18614838420081628,
+            "coverage_q99": 0.9319444444444445,
+            "pinball_q_upper": 0.18614838420081628,
+            "coverage_q_upper": 0.9319444444444445,
+            "pinball_q95": 0.18614838420081628,
+            "coverage_q95": 0.9319444444444445,
+            "interval_width_mean": 7.23929984960759,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          },
+          "tft": {
+            "model": "tft",
+            "split": "val",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 3600,
+            "rmse_q50": 5.465644859279855,
+            "pinball_q50": 1.0861554539142784,
+            "pinball_q99": 0.09131690057784574,
+            "coverage_q99": 0.9936979166666666,
+            "pinball_q_upper": 0.09131690057784574,
+            "coverage_q_upper": 0.9936979166666666,
+            "pinball_q95": 0.09131690057784574,
+            "coverage_q95": 0.9936979166666666,
+            "interval_width_mean": 7.843790663675513,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          }
+        },
+        "test": {
+          "chronos2": {
+            "model": "chronos2",
+            "split": "test",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 7400,
+            "rmse_q50": 7.0704774589140005,
+            "pinball_q50": 2.1084172782477926,
+            "pinball_q99": 0.1897052423982931,
+            "coverage_q99": 0.953018018018018,
+            "pinball_q_upper": 0.1897052423982931,
+            "coverage_q_upper": 0.953018018018018,
+            "pinball_q95": 0.1897052423982931,
+            "coverage_q95": 0.953018018018018,
+            "interval_width_mean": 12.095557236357651,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          },
+          "deepar": {
+            "model": "deepar",
+            "split": "test",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 7400,
+            "rmse_q50": 5.942034877813859,
+            "pinball_q50": 1.4892021586719395,
+            "pinball_q99": 0.3285457256896535,
+            "coverage_q99": 0.8403153153153153,
+            "pinball_q_upper": 0.3285457256896535,
+            "coverage_q_upper": 0.8403153153153153,
+            "pinball_q95": 0.3285457256896535,
+            "coverage_q95": 0.8403153153153153,
+            "interval_width_mean": 5.066291265311061,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          },
+          "lstm": {
+            "model": "lstm",
+            "split": "test",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 7400,
+            "rmse_q50": 6.102687185145067,
+            "pinball_q50": 1.51383587041772,
+            "pinball_q99": 0.12876599379182807,
+            "coverage_q99": 0.9965878378378379,
+            "pinball_q_upper": 0.12876599379182807,
+            "coverage_q_upper": 0.9965878378378379,
+            "pinball_q95": 0.12876599379182807,
+            "coverage_q95": 0.9965878378378379,
+            "interval_width_mean": 10.168150174242566,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          },
+          "seasonal_naive": {
+            "model": "seasonal_naive",
+            "split": "test",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 7400,
+            "rmse_q50": 7.262977899848634,
+            "pinball_q50": 1.4049794144208432,
+            "pinball_q99": 0.17976923406950804,
+            "coverage_q99": 0.9265259009009009,
+            "pinball_q_upper": 0.17976923406950804,
+            "coverage_q_upper": 0.9265259009009009,
+            "pinball_q95": 0.17976923406950804,
+            "coverage_q95": 0.9265259009009009,
+            "interval_width_mean": 6.494677851732306,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          },
+          "tft": {
+            "model": "tft",
+            "split": "test",
+            "dataset_path": "data/data_tim_milan_10min_trainable_200.csv",
+            "context_length": 144,
+            "horizon": 48,
+            "quantiles": [
+              0.5,
+              0.99
+            ],
+            "upper_quantile": 0.99,
+            "device": "mps",
+            "num_windows_total": 7400,
+            "rmse_q50": 5.7562991577620615,
+            "pinball_q50": 1.1848833491723476,
+            "pinball_q99": 0.11197841418906453,
+            "coverage_q99": 0.9818665540540541,
+            "pinball_q_upper": 0.11197841418906453,
+            "coverage_q_upper": 0.9818665540540541,
+            "pinball_q95": 0.11197841418906453,
+            "coverage_q95": 0.9818665540540541,
+            "interval_width_mean": 7.050633871144989,
+            "window_policy": {
+              "type": "non_overlapping",
+              "anchor": "split_start",
+              "window_step": 48,
+              "max_windows_per_series": null
+            }
+          }
+        }
+      },
+      "plots": {
+        "forecast_eval_test_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/forecast_eval_test.png",
+        "forecast_eval_val_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/forecast_eval_val.png",
+        "example_windows_chronos2_test_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/example_windows_chronos2_test.png",
+        "example_windows_lstm_test_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/example_windows_lstm_test.png",
+        "example_windows_deepar_test_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/example_windows_deepar_test.png",
+        "example_windows_tft_test_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/example_windows_tft_test.png",
+        "example_windows_seasonal_naive_test_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/example_windows_seasonal_naive_test.png",
+        "example_windows_test_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/example_windows_test.png"
+      },
+      "report_index": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/report_index.json",
+      "published_plots": {
+        "energy_pareto_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/energy_pareto_test.png",
+        "example_windows_chronos2_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_chronos2_test.png",
+        "example_windows_deepar_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_deepar_test.png",
+        "example_windows_lstm_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_lstm_test.png",
+        "example_windows_seasonal_naive_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_seasonal_naive_test.png",
+        "example_windows_system_eval_chronos2_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_chronos2_test.png",
+        "example_windows_system_eval_deepar_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_deepar_test.png",
+        "example_windows_system_eval_lstm_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_lstm_test.png",
+        "example_windows_system_eval_seasonal_naive_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_seasonal_naive_test.png",
+        "example_windows_system_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/pipeline_example_chronos2_test.png",
+        "example_windows_system_eval_tft_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_tft_test.png",
+        "example_windows_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_example_chronos2_test.png",
+        "example_windows_tft_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_tft_test.png",
+        "forecast_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_eval_test.png",
+        "forecast_eval_val_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_eval_val.png",
+        "split_summary_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/prepare_data_split_summary.png",
+        "system_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/system_eval_test.png",
+        "training_coverage_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_coverage.png",
+        "training_interval_width_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_interval_width.png",
+        "training_loss_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_loss.png",
+        "training_rmse_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_rmse.png",
+        "published_report_index": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/published_report_index.json"
+      }
+    },
+    "system_eval": {
+      "status": "success",
+      "started_at_utc": "2026-04-17T09:54:22.444985+00:00",
+      "finished_at_utc": "2026-04-17T09:54:47.820633+00:00",
+      "duration_sec": 25.376,
+      "command": [
+        "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/.venv/bin/python",
+        "src/system_eval.py",
+        "--forecast-dir",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval",
+        "--models",
+        "lstm,deepar,tft,chronos2,seasonal_naive",
+        "--splits",
+        "test",
+        "--output-dir",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/system_eval",
+        "--tolerance",
+        "3",
+        "--cp-detector",
+        "clasp",
+        "--cp-period-length",
+        "16",
+        "--cp-exclusion-radius",
+        "0.05",
+        "--cp-score-threshold",
+        "0.5",
+        "--cp-model",
+        "normal",
+        "--cp-penalty",
+        "10.0",
+        "--cp-min-size",
+        "8",
+        "--cp-jump",
+        "1"
+      ],
+      "metrics": {
+        "test": {
+          "chronos2": {
+            "model": "chronos2",
+            "split": "test",
+            "timestamp_utc": "2026-04-17T09:54:39.815455+00:00",
+            "num_windows_total": 7400,
+            "MAE_CP": 7.415405405405405,
+            "tau_mae_when_both_break": 7.415405405405405,
+            "tolerance": 3,
+            "tolerance_hit_rate": 0.4201351351351351,
+            "tolerance_hit_rate_when_both_break": 0.4201351351351351,
+            "break_precision": 1.0,
+            "break_recall": 1.0,
+            "break_f1": 1.0,
+            "coverage_rate": 0.9812607655955228,
+            "sharpness": 6.347760441432671,
+            "relative_sharpness": 0.36659832433808126,
+            "relative_sharpness_mean_of_ratios": 0.41945908222466644,
+            "sharpness_covered": 7.429211710532497,
+            "relative_sharpness_covered": 0.43664644393726026,
+            "covered_window_frac": 0.8886486486486487,
+            "undercoverage_window_frac": 0.11135135135135135,
+            "undercoverage_severity": 0.11577574125246322,
+            "cp_detector": {
+              "cp_detector": "clasp",
+              "cp_model": "normal",
+              "cp_penalty": 10.0,
+              "cp_min_size": 8,
+              "cp_jump": 1,
+              "cp_period_length": "16",
+              "cp_exclusion_radius": 0.05,
+              "cp_score_threshold": 0.5
+            }
+          },
+          "deepar": {
+            "model": "deepar",
+            "split": "test",
+            "timestamp_utc": "2026-04-17T09:54:31.081782+00:00",
+            "num_windows_total": 7400,
+            "MAE_CP": 7.1891891891891895,
+            "tau_mae_when_both_break": 7.1891891891891895,
+            "tolerance": 3,
+            "tolerance_hit_rate": 0.40513513513513516,
+            "tolerance_hit_rate_when_both_break": 0.40513513513513516,
+            "break_precision": 1.0,
+            "break_recall": 1.0,
+            "break_f1": 1.0,
+            "coverage_rate": 0.9490632812753661,
+            "sharpness": 2.01578928206974,
+            "relative_sharpness": 0.11697127591840803,
+            "relative_sharpness_mean_of_ratios": 0.14240271410840202,
+            "sharpness_covered": 3.7340617123395736,
+            "relative_sharpness_covered": 0.21888718638344085,
+            "covered_window_frac": 0.6954054054054054,
+            "undercoverage_window_frac": 0.3045945945945946,
+            "undercoverage_severity": 0.10817313311698626,
+            "cp_detector": {
+              "cp_detector": "clasp",
+              "cp_model": "normal",
+              "cp_penalty": 10.0,
+              "cp_min_size": 8,
+              "cp_jump": 1,
+              "cp_period_length": "16",
+              "cp_exclusion_radius": 0.05,
+              "cp_score_threshold": 0.5
+            }
+          },
+          "lstm": {
+            "model": "lstm",
+            "split": "test",
+            "timestamp_utc": "2026-04-17T09:54:26.728488+00:00",
+            "num_windows_total": 7400,
+            "MAE_CP": 7.216486486486486,
+            "tau_mae_when_both_break": 7.216486486486486,
+            "tolerance": 3,
+            "tolerance_hit_rate": 0.29094594594594597,
+            "tolerance_hit_rate_when_both_break": 0.29094594594594597,
+            "break_precision": 1.0,
+            "break_recall": 1.0,
+            "break_f1": 1.0,
+            "coverage_rate": 0.99875372723106,
+            "sharpness": 9.595716737228834,
+            "relative_sharpness": 0.5372884002925816,
+            "relative_sharpness_mean_of_ratios": 0.6307710554376811,
+            "sharpness_covered": 9.75316736350283,
+            "relative_sharpness_covered": 0.548762592798584,
+            "covered_window_frac": 0.9872972972972973,
+            "undercoverage_window_frac": 0.012702702702702703,
+            "undercoverage_severity": 0.10746644922843869,
+            "cp_detector": {
+              "cp_detector": "clasp",
+              "cp_model": "normal",
+              "cp_penalty": 10.0,
+              "cp_min_size": 8,
+              "cp_jump": 1,
+              "cp_period_length": "16",
+              "cp_exclusion_radius": 0.05,
+              "cp_score_threshold": 0.5
+            }
+          },
+          "seasonal_naive": {
+            "model": "seasonal_naive",
+            "split": "test",
+            "timestamp_utc": "2026-04-17T09:54:44.182462+00:00",
+            "num_windows_total": 7400,
+            "MAE_CP": 7.332972972972973,
+            "tau_mae_when_both_break": 7.332972972972973,
+            "tolerance": 3,
+            "tolerance_hit_rate": 0.4267567567567568,
+            "tolerance_hit_rate_when_both_break": 0.4267567567567568,
+            "break_precision": 1.0,
+            "break_recall": 1.0,
+            "break_f1": 1.0,
+            "coverage_rate": 0.9893628469960521,
+            "sharpness": 6.8833273965354485,
+            "relative_sharpness": 0.39279601382672946,
+            "relative_sharpness_mean_of_ratios": 0.36166399731040977,
+            "sharpness_covered": 7.666377146455532,
+            "relative_sharpness_covered": 0.4334291472504025,
+            "covered_window_frac": 0.9147297297297298,
+            "undercoverage_window_frac": 0.08527027027027027,
+            "undercoverage_severity": 0.09620096089941811,
+            "cp_detector": {
+              "cp_detector": "clasp",
+              "cp_model": "normal",
+              "cp_penalty": 10.0,
+              "cp_min_size": 8,
+              "cp_jump": 1,
+              "cp_period_length": "16",
+              "cp_exclusion_radius": 0.05,
+              "cp_score_threshold": 0.5
+            }
+          },
+          "tft": {
+            "model": "tft",
+            "split": "test",
+            "timestamp_utc": "2026-04-17T09:54:35.464022+00:00",
+            "num_windows_total": 7400,
+            "MAE_CP": 7.153243243243243,
+            "tau_mae_when_both_break": 7.153243243243243,
+            "tolerance": 3,
+            "tolerance_hit_rate": 0.4089189189189189,
+            "tolerance_hit_rate_when_both_break": 0.4089189189189189,
+            "break_precision": 1.0,
+            "break_recall": 1.0,
+            "break_f1": 1.0,
+            "coverage_rate": 0.9958565426992282,
+            "sharpness": 5.882435149107927,
+            "relative_sharpness": 0.348191532563029,
+            "relative_sharpness_mean_of_ratios": 0.4430265422590042,
+            "sharpness_covered": 6.220609083180324,
+            "relative_sharpness_covered": 0.3781979542319605,
+            "covered_window_frac": 0.9589189189189189,
+            "undercoverage_window_frac": 0.04108108108108108,
+            "undercoverage_severity": 0.0736450819213459,
+            "cp_detector": {
+              "cp_detector": "clasp",
+              "cp_model": "normal",
+              "cp_penalty": 10.0,
+              "cp_min_size": 8,
+              "cp_jump": 1,
+              "cp_period_length": "16",
+              "cp_exclusion_radius": 0.05,
+              "cp_score_threshold": 0.5
+            }
+          }
+        }
+      },
+      "plots": {
+        "system_eval_test_plot": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/system_eval_test.png"
+      },
+      "report_index": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/report_index.json",
+      "published_plots": {
+        "energy_pareto_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/energy_pareto_test.png",
+        "example_windows_chronos2_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_chronos2_test.png",
+        "example_windows_deepar_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_deepar_test.png",
+        "example_windows_lstm_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_lstm_test.png",
+        "example_windows_seasonal_naive_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_seasonal_naive_test.png",
+        "example_windows_system_eval_chronos2_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_chronos2_test.png",
+        "example_windows_system_eval_deepar_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_deepar_test.png",
+        "example_windows_system_eval_lstm_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_lstm_test.png",
+        "example_windows_system_eval_seasonal_naive_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_seasonal_naive_test.png",
+        "example_windows_system_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/pipeline_example_chronos2_test.png",
+        "example_windows_system_eval_tft_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_tft_test.png",
+        "example_windows_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_example_chronos2_test.png",
+        "example_windows_tft_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_tft_test.png",
+        "forecast_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_eval_test.png",
+        "forecast_eval_val_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_eval_val.png",
+        "split_summary_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/prepare_data_split_summary.png",
+        "system_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/system_eval_test.png",
+        "training_coverage_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_coverage.png",
+        "training_interval_width_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_interval_width.png",
+        "training_loss_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_loss.png",
+        "training_rmse_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_rmse.png",
+        "published_report_index": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/published_report_index.json"
+      }
+    },
+    "energy_eval": {
+      "status": "success",
+      "started_at_utc": "2026-04-17T09:54:47.821074+00:00",
+      "finished_at_utc": "2026-04-17T09:54:51.763417+00:00",
+      "duration_sec": 3.942,
+      "command": [
+        "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/.venv/bin/python",
+        "src/energy_eval.py",
+        "--forecast-dir",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/forecast_eval",
+        "--training-dir",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/training",
+        "--output-dir",
+        "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/energy",
+        "--models",
+        "lstm,deepar,tft,chronos2,seasonal_naive",
+        "--splits",
+        "test",
+        "--context-length",
+        "144",
+        "--horizon",
+        "48",
+        "--batch-size",
+        "64",
+        "--hidden-size",
+        "128",
+        "--num-layers",
+        "2",
+        "--tft-num-heads",
+        "4",
+        "--deepar-num-samples",
+        "200",
+        "--n-quantiles",
+        "2"
+      ],
+      "metrics": {
+        "test": {
+          "chronos2": {
+            "model": "chronos2",
+            "train_flops": 0.0,
+            "infer_flops": 21312000000000.0,
+            "total_flops": 21312000000000.0,
+            "energy_J_gpu": 27.705599999999997,
+            "energy_J_cpu": 21312.0,
+            "energy_constants": {
+              "J_per_flop_gpu": 1.3e-12,
+              "J_per_flop_cpu": 1e-09
+            },
+            "arch": {
+              "params": 120000000,
+              "patch": 16,
+              "tokens": 12
+            }
+          },
+          "deepar": {
+            "model": "deepar",
+            "train_flops": 1202166384427008.0,
+            "infer_flops": 611518003200.0,
+            "total_flops": 1202777902430208.0,
+            "energy_J_gpu": 1563.6112731592702,
+            "energy_J_cpu": 1202777.9024302082,
+            "energy_constants": {
+              "J_per_flop_gpu": 1.3e-12,
+              "J_per_flop_cpu": 1e-09
+            },
+            "arch": {
+              "input_dim": 1,
+              "hidden": 128,
+              "n_layers": 2,
+              "n_samples": 1,
+              "params": 215202,
+              "params_source": "checkpoint",
+              "tokens": 192
+            }
+          },
+          "lstm": {
+            "model": "lstm",
+            "train_flops": 738610418810880.0,
+            "infer_flops": 601146163200.0,
+            "total_flops": 739211564974080.0,
+            "energy_J_gpu": 960.9750344663039,
+            "energy_J_cpu": 739211.5649740801,
+            "energy_constants": {
+              "J_per_flop_gpu": 1.3e-12,
+              "J_per_flop_cpu": 1e-09
+            },
+            "arch": {
+              "input_dim": 1,
+              "hidden": 128,
+              "n_layers": 2,
+              "params": 211552,
+              "params_source": "checkpoint",
+              "tokens": 192
+            }
+          },
+          "seasonal_naive": {
+            "model": "seasonal_naive",
+            "train_flops": 0.0,
+            "infer_flops": 7995472.081536927,
+            "total_flops": 7995472.081536927,
+            "energy_J_gpu": 1.0394113705998004e-05,
+            "energy_J_cpu": 0.007995472081536928,
+            "energy_constants": {
+              "J_per_flop_gpu": 1.3e-12,
+              "J_per_flop_cpu": 1e-09
+            },
+            "arch": {
+              "ctx": 144,
+              "horizon": 48
+            }
+          },
+          "tft": {
+            "model": "tft",
+            "train_flops": 1700809417359360.0,
+            "infer_flops": 5191006464000.0,
+            "total_flops": 1706000423823360.0,
+            "energy_J_gpu": 2217.800550970368,
+            "energy_J_cpu": 1706000.4238233601,
+            "energy_constants": {
+              "J_per_flop_gpu": 1.3e-12,
+              "J_per_flop_cpu": 1e-09
+            },
+            "arch": {
+              "d_model": 128,
+              "n_heads": 4,
+              "n_layers": 2,
+              "params": 1826790,
+              "params_source": "checkpoint",
+              "tokens": 192
+            }
+          }
+        }
+      },
+      "plots": {},
+      "report_index": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42/reports/report_index.json",
+      "published_plots": {
+        "energy_pareto_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/energy_pareto_test.png",
+        "example_windows_chronos2_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_chronos2_test.png",
+        "example_windows_deepar_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_deepar_test.png",
+        "example_windows_lstm_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_lstm_test.png",
+        "example_windows_seasonal_naive_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_seasonal_naive_test.png",
+        "example_windows_system_eval_chronos2_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_chronos2_test.png",
+        "example_windows_system_eval_deepar_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_deepar_test.png",
+        "example_windows_system_eval_lstm_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_lstm_test.png",
+        "example_windows_system_eval_seasonal_naive_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_seasonal_naive_test.png",
+        "example_windows_system_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/pipeline_example_chronos2_test.png",
+        "example_windows_system_eval_tft_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_system_eval_tft_test.png",
+        "example_windows_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_example_chronos2_test.png",
+        "example_windows_tft_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/example_windows_tft_test.png",
+        "forecast_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_eval_test.png",
+        "forecast_eval_val_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/forecast_eval_val.png",
+        "split_summary_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/prepare_data_split_summary.png",
+        "system_eval_test_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/system_eval_test.png",
+        "training_coverage_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_coverage.png",
+        "training_interval_width_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_interval_width.png",
+        "training_loss_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_loss.png",
+        "training_rmse_plot": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/training_rmse.png",
+        "published_report_index": "/Users/colinminini/Desktop/SCOC_ICE/LLM6G-Repository/results/plots/readme/published_report_index.json"
+      }
+    }
+  },
+  "experiment_dir": "results/experiments/data_tim_milan_10min_trainable_200_ctx144_h48/q50_q99_seed42"
+}

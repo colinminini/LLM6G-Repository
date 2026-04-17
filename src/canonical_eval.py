@@ -57,6 +57,7 @@ def evaluate_forecaster_on_split(
     timestamps = df[manifest.timestamp_col].astype(str).to_numpy()
     total_windows = sum(len(starts) for starts in starts_map.values())
     batch_size = max(1, int(getattr(forecaster, "evaluation_batch_size", 64)))
+    upper_quantile = float(manifest.quantiles[-1]) if manifest.quantiles else 0.99
 
     progress: StageProgressDisplay | None = None
     if progress_label is not None:
@@ -114,7 +115,7 @@ def evaluate_forecaster_on_split(
             sse_total += float(np.square(y50_batch - futures).sum())
             count_total += int(futures.size)
             q50_pinball_total += pinball_loss(futures, y50_batch, 0.5) * futures.size
-            q95_pinball_total += pinball_loss(futures, y95_batch, 0.95) * futures.size
+            q95_pinball_total += pinball_loss(futures, y95_batch, upper_quantile) * futures.size
             coverage_hits += int(np.sum(futures <= y95_batch))
             interval_sum += float(np.sum(np.maximum(y95_batch - y50_batch, 0.0)))
             interval_count += int(y50_batch.size)
@@ -165,6 +166,9 @@ def evaluate_forecaster_on_split(
                     },
                 )
 
+    upper_tag = f"q{int(round(100.0 * upper_quantile))}"
+    pinball_upper = float(q95_pinball_total / count_total) if count_total else float("nan")
+    coverage_upper = float(coverage_hits / count_total) if count_total else float("nan")
     metrics = {
         "model": model_name,
         "split": split_name,
@@ -172,12 +176,19 @@ def evaluate_forecaster_on_split(
         "context_length": manifest.context_length,
         "horizon": manifest.horizon,
         "quantiles": list(manifest.quantiles),
+        "upper_quantile": float(upper_quantile),
         "device": device,
         "num_windows_total": total_windows,
         "rmse_q50": float(np.sqrt(sse_total / count_total)) if count_total else float("nan"),
         "pinball_q50": float(q50_pinball_total / count_total) if count_total else float("nan"),
-        "pinball_q95": float(q95_pinball_total / count_total) if count_total else float("nan"),
-        "coverage_q95": float(coverage_hits / count_total) if count_total else float("nan"),
+        f"pinball_{upper_tag}": pinball_upper,
+        f"coverage_{upper_tag}": coverage_upper,
+        "pinball_q_upper": pinball_upper,
+        "coverage_q_upper": coverage_upper,
+        # Aliases retained for backward compatibility with downstream readers
+        # that key on the hardcoded "q95" suffix (train_utils, older plots).
+        "pinball_q95": pinball_upper,
+        "coverage_q95": coverage_upper,
         "interval_width_mean": float(interval_sum / interval_count) if interval_count else float("nan"),
         "window_policy": canonical_window_policy(
             manifest,

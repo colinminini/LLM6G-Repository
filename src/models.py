@@ -226,6 +226,72 @@ class DeepARForecast(nn.Module):
             "scale": scale.squeeze(-1),
         }
 
+    def analytic_gaussian_forecast(
+        self,
+        *,
+        context: torch.Tensor,
+        context_time_features: torch.Tensor,
+        future_time_features: torch.Tensor,
+        item_ids: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Deterministic greedy rollout returning per-step Gaussian (mean, sigma).
+
+        Feeds the predicted mean (rescaled) back into the LSTM at each step instead
+        of a sampled draw. The returned marginals let us form analytic quantiles
+        (e.g. q99 = mean + z * sigma) without Monte-Carlo noise. Only valid under
+        the Gaussian likelihood.
+        """
+        if self.likelihood != "gaussian":
+            raise ValueError("analytic_gaussian_forecast requires likelihood='gaussian'.")
+        if context.dim() != 2:
+            raise ValueError("context must have shape (batch, context_length).")
+        if context_time_features.dim() != 3 or future_time_features.dim() != 3:
+            raise ValueError("time feature tensors must have shape (batch, sequence, num_features).")
+        if context.size(1) != self.context_length:
+            raise ValueError("context length does not match model context_length.")
+        if future_time_features.size(1) != self.forecast_length:
+            raise ValueError("future_time_features length does not match forecast_length.")
+
+        batch_size = context.size(0)
+        scale = self._compute_scale(context)
+        scaled_context = context / scale
+        item_embed = self.item_embedding(item_ids)
+        repeated_item = item_embed.unsqueeze(1).expand(-1, self.context_length, -1)
+        prev_context = torch.cat(
+            [
+                torch.zeros(
+                    batch_size,
+                    1,
+                    device=context.device,
+                    dtype=context.dtype,
+                ),
+                scaled_context[:, :-1],
+            ],
+            dim=1,
+        )
+        encode_inputs = self._build_step_inputs(prev_context, context_time_features, repeated_item)
+        _, state = self.lstm(encode_inputs)
+        hidden, cell = state
+        prev = scaled_context[:, -1]
+
+        mean_steps: list[torch.Tensor] = []
+        sigma_steps: list[torch.Tensor] = []
+        for step_idx in range(self.forecast_length):
+            step_features = future_time_features[:, step_idx, :]
+            step_input = self._build_step_inputs(prev, step_features, item_embed).unsqueeze(1)
+            output, (hidden, cell) = self.lstm(step_input, (hidden, cell))
+            projected = self._project_params(output[:, -1:, :], scale)
+            mean = projected["mean"].squeeze(1)
+            sigma = projected["aux"].squeeze(1)
+            mean_steps.append(mean)
+            sigma_steps.append(sigma)
+            prev = mean / scale.squeeze(-1)
+
+        return {
+            "mean": torch.stack(mean_steps, dim=-1),
+            "sigma": torch.stack(sigma_steps, dim=-1),
+        }
+
     def sample_forecasts(
         self,
         *,

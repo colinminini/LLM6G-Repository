@@ -27,12 +27,21 @@ Z95 = 1.6448536269514722
 
 @dataclass
 class ProbabilisticForecast:
+    """Probabilistic forecast container.
+
+    The field name ``y_pred_95`` is historical; it holds whichever upper
+    quantile is configured (DEFAULT_QUANTILES[-1], now 0.99). Treat it as
+    ``y_pred_upper``.
+    """
+
     y_pred_median: np.ndarray
     y_pred_95: np.ndarray
 
 
 @dataclass
 class ProbabilisticForecastBatch:
+    """Batched ``ProbabilisticForecast`` (see that class for field semantics)."""
+
     y_pred_median: np.ndarray
     y_pred_95: np.ndarray
 
@@ -308,26 +317,57 @@ class _TorchProbabilisticMixin:
                     context_time = np.stack(context_rows, axis=0)
                     future_time = np.stack(future_rows, axis=0)
 
-                draws = self.model.sample_forecasts(
-                    context=context_tensor,
-                    context_time_features=torch.tensor(
-                        context_time, dtype=torch.float32, device=self.device
-                    ),
-                    future_time_features=torch.tensor(
-                        future_time, dtype=torch.float32, device=self.device
-                    ),
-                    item_ids=torch.tensor(item_ids, dtype=torch.long, device=self.device),
-                    num_samples=(
-                        self.deepar_support.num_samples
-                        if self.deepar_support is not None
-                        else 200
-                    ),
-                    random_seed=(
-                        self.deepar_support.random_seed if self.deepar_support is not None else 42
-                    ),
-                )
-                y50 = torch.quantile(draws, 0.5, dim=1).detach().cpu().numpy().astype(float)
-                y95 = torch.quantile(draws, 0.95, dim=1).detach().cpu().numpy().astype(float)
+                upper_quantile = float(self.output_quantiles[-1]) if self.output_quantiles else 0.99
+                likelihood = str(getattr(self.model, "likelihood", "gaussian")).lower()
+                if likelihood == "gaussian":
+                    # Analytic Gaussian quantiles via a deterministic greedy rollout:
+                    # feeds per-step mean back into the LSTM and reads (mu_t, sigma_t)
+                    # from the head. This isolates "Gaussian NLL miscalibration" from
+                    # Monte-Carlo noise and is what paper_v2 compares against pinball.
+                    params = self.model.analytic_gaussian_forecast(
+                        context=context_tensor,
+                        context_time_features=torch.tensor(
+                            context_time, dtype=torch.float32, device=self.device
+                        ),
+                        future_time_features=torch.tensor(
+                            future_time, dtype=torch.float32, device=self.device
+                        ),
+                        item_ids=torch.tensor(item_ids, dtype=torch.long, device=self.device),
+                    )
+                    mean = params["mean"].detach().cpu().numpy().astype(float)
+                    sigma = params["sigma"].detach().cpu().numpy().astype(float)
+                    from scipy.stats import norm
+
+                    z_upper = float(norm.ppf(upper_quantile))
+                    y50 = mean
+                    y95 = mean + z_upper * sigma
+                else:
+                    draws = self.model.sample_forecasts(
+                        context=context_tensor,
+                        context_time_features=torch.tensor(
+                            context_time, dtype=torch.float32, device=self.device
+                        ),
+                        future_time_features=torch.tensor(
+                            future_time, dtype=torch.float32, device=self.device
+                        ),
+                        item_ids=torch.tensor(item_ids, dtype=torch.long, device=self.device),
+                        num_samples=(
+                            self.deepar_support.num_samples
+                            if self.deepar_support is not None
+                            else 200
+                        ),
+                        random_seed=(
+                            self.deepar_support.random_seed if self.deepar_support is not None else 42
+                        ),
+                    )
+                    y50 = torch.quantile(draws, 0.5, dim=1).detach().cpu().numpy().astype(float)
+                    y95 = (
+                        torch.quantile(draws, upper_quantile, dim=1)
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(float)
+                    )
             elif self.model_type == "tft":
                 if self.tft_support is None or start_indices is None or series_names is None:
                     context_known = np.zeros(
@@ -549,7 +589,7 @@ class TorchModelForecaster(_TorchProbabilisticMixin, Forecaster):
         self.input_quantiles = tuple(float(q) for q in quantiles)
         if output_quantiles is None:
             if self.model_type == "deepar":
-                self.output_quantiles = (0.5, 0.95)
+                self.output_quantiles = self.input_quantiles
             else:
                 self.output_quantiles = tuple(
                     float(q) for q in getattr(model, "quantiles", self.input_quantiles)
@@ -733,7 +773,7 @@ class TorchCheckpointForecaster(TorchModelForecaster):
                 quantiles=output_quantiles,
             )
         elif self.model_type == "deepar":
-            output_quantiles = (0.5, 0.95)
+            output_quantiles = self.input_quantiles
             if "item_embedding.weight" in state_dict:
                 feature_payload = self.model_config.get("deepar_feature_spec") or {}
                 inferred_embedding_dim = int(state_dict["item_embedding.weight"].shape[1])
@@ -807,6 +847,7 @@ class Chronos2ZeroShotForecaster(Forecaster):
         model_id: str = "amazon/chronos-2",
         device: str | torch.device = AUTO_DEVICE,
         num_samples: int = 100,
+        quantile_levels: Sequence[float] = DEFAULT_QUANTILES,
     ) -> None:
         try:
             from chronos import Chronos2Pipeline
@@ -820,6 +861,8 @@ class Chronos2ZeroShotForecaster(Forecaster):
         # Chronos2 quantiles are extracted directly from model outputs.
         self.num_samples = int(num_samples)
         self.evaluation_batch_size = 32
+        self.quantile_levels = tuple(float(q) for q in quantile_levels)
+        self.upper_quantile = float(self.quantile_levels[-1])
 
         self.pipeline = Chronos2Pipeline.from_pretrained(model_id)
         self.pipeline.model = self.pipeline.model.to(self.device)
@@ -860,22 +903,25 @@ class Chronos2ZeroShotForecaster(Forecaster):
         ]
 
     @staticmethod
-    def _resolve_quantile_indices(quantile_levels: Sequence[float] | None) -> tuple[int, int]:
+    def _resolve_quantile_indices(
+        quantile_levels: Sequence[float] | None,
+        upper_quantile: float = 0.99,
+    ) -> tuple[int, int]:
         """
-        Resolve q50/q95 indices from wrapper metadata when available.
+        Resolve indices for q50 and the configured upper quantile.
 
-        Falls back to Chronos2's 21-quantile convention:
-        - q50 at index 10 (11th quantile)
-        - q95 at index -2 (2nd-to-last quantile)
+        Chronos-2's wrapper exposes 21 native quantiles
+        ``[0.01, 0.05, 0.10, ..., 0.95, 0.99]``; we pick the closest match.
+        Falls back to (10, last index) when the wrapper does not expose levels.
         """
         if quantile_levels is None:
-            return 10, -2
+            return 10, 20
         q = np.asarray(list(quantile_levels), dtype=float)
         if q.ndim != 1 or q.size < 2:
-            return 10, -2
+            return 10, q.size - 1
         idx_50 = int(np.argmin(np.abs(q - 0.50)))
-        idx_95 = int(np.argmin(np.abs(q - 0.95)))
-        return idx_50, idx_95
+        idx_upper = int(np.argmin(np.abs(q - float(upper_quantile))))
+        return idx_50, idx_upper
 
     @staticmethod
     def _extract_quantile_matrix(
@@ -951,14 +997,16 @@ class Chronos2ZeroShotForecaster(Forecaster):
             if quantile_levels is not None
             else None
         )
-        idx_50, idx_95 = self._resolve_quantile_indices(quantile_levels)
+        idx_50, idx_upper = self._resolve_quantile_indices(
+            quantile_levels, upper_quantile=self.upper_quantile
+        )
         matrices = self._extract_batch_quantile_matrices(forecast, expected_num_quantiles)
         y50 = np.stack(
             [np.asarray(matrix[idx_50][:horizon], dtype=float) for matrix in matrices],
             axis=0,
         )
         y95 = np.stack(
-            [np.asarray(matrix[idx_95][:horizon], dtype=float) for matrix in matrices],
+            [np.asarray(matrix[idx_upper][:horizon], dtype=float) for matrix in matrices],
             axis=0,
         )
         y95 = np.maximum(y95, y50)
@@ -966,13 +1014,25 @@ class Chronos2ZeroShotForecaster(Forecaster):
 
 
 class SeasonalNaiveForecaster(Forecaster):
-    """Daily seasonal-naive baseline with a history-derived q95 margin."""
+    """Daily seasonal-naive baseline with a history-derived upper-quantile margin.
 
-    def __init__(self, season_length: int = DEFAULT_SEASONAL_NAIVE_PERIOD) -> None:
+    The upper quantile target is configurable via ``quantile_levels[-1]``
+    (default 0.99) and is used to compute the margin from seasonal residuals.
+    """
+
+    def __init__(
+        self,
+        season_length: int = DEFAULT_SEASONAL_NAIVE_PERIOD,
+        quantile_levels: Sequence[float] = DEFAULT_QUANTILES,
+    ) -> None:
         season_length = int(season_length)
         if season_length <= 0:
             raise ValueError("season_length must be positive.")
         self.season_length = season_length
+        self.quantile_levels = tuple(float(q) for q in quantile_levels)
+        if not self.quantile_levels:
+            raise ValueError("quantile_levels must contain at least one value.")
+        self.upper_quantile = float(self.quantile_levels[-1])
         self.evaluation_batch_size = 1024
 
     def _estimate_upper_margin(self, history: np.ndarray) -> float:
@@ -987,7 +1047,7 @@ class SeasonalNaiveForecaster(Forecaster):
         residuals = residuals[np.isfinite(residuals)]
         if residuals.size == 0:
             return 0.0
-        return float(max(np.quantile(residuals, 0.95), 0.0))
+        return float(max(np.quantile(residuals, self.upper_quantile), 0.0))
 
     def predict_quantiles(
         self,
@@ -1032,6 +1092,132 @@ class SeasonalNaiveForecaster(Forecaster):
         )[:, None]
         y95 = np.maximum(y50 + margin, y50)
         return ProbabilisticForecastBatch(y_pred_median=y50, y_pred_95=y95)
+
+
+class SarimaForecaster(Forecaster):
+    """SARIMAX(1,0,1)x(1,0,1,s) with Gaussian-interval upper-quantile bounds.
+
+    Fits per-window on the provided history (no global training stage). The
+    upper quantile is set from ``quantile_levels[-1]`` (default 0.99) and the
+    interval bound is derived from ``predicted_mean + z_q * sqrt(var)``.
+    """
+
+    def __init__(
+        self,
+        season_length: int = DEFAULT_SEASONAL_NAIVE_PERIOD,
+        quantile_levels: Sequence[float] = DEFAULT_QUANTILES,
+        order: tuple[int, int, int] = (1, 0, 1),
+        seasonal_order: tuple[int, int, int] | None = None,
+    ) -> None:
+        try:
+            from statsmodels.tsa.statespace.sarimax import SARIMAX
+            from scipy.stats import norm
+        except ImportError as exc:  # pragma: no cover - environment-dependent
+            raise ImportError(
+                "statsmodels and scipy are required for SarimaForecaster."
+            ) from exc
+
+        self._SARIMAX = SARIMAX
+        self._norm = norm
+        self.season_length = int(season_length)
+        self.order = tuple(int(x) for x in order)
+        self.seasonal_order = (
+            tuple(int(x) for x in seasonal_order)
+            if seasonal_order is not None
+            else (1, 0, 1, self.season_length)
+        )
+        self.quantile_levels = tuple(float(q) for q in quantile_levels)
+        self.upper_quantile = float(self.quantile_levels[-1])
+        # Per-window L-BFGS fit is expensive (state dim grows with seasonal
+        # period). Speed knobs below cut a 144-period fit substantially:
+        #   simple_differencing=True  -> drop the seasonal lags from the state
+        #   maxiter=20                -> mobile traffic fits saturate by ~15
+        # Parallelism over windows is exposed via predict_quantiles_batch.
+        # (concentrate_scale is intentionally NOT enabled: it interacts poorly
+        # with simple_differencing on short clean histories and yields NaN
+        # var_pred_mean, which collapses the upper quantile to the fallback.)
+        self._fit_kwargs = {"disp": False, "maxiter": 20, "method": "lbfgs"}
+        self._sarimax_kwargs = {
+            "order": self.order,
+            "seasonal_order": self.seasonal_order,
+            "enforce_stationarity": False,
+            "enforce_invertibility": False,
+            "simple_differencing": True,
+        }
+        self._n_jobs = -1
+        self.evaluation_batch_size = 32
+
+    def _fit_one(
+        self,
+        history_arr: np.ndarray,
+        horizon: int,
+        z_upper: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        # Residual-std Gaussian band with sqrt(h) growth. statsmodels'
+        # analytical var_pred_mean accumulates unboundedly when AR roots
+        # are not constrained (enforce_stationarity=False), producing
+        # upper bounds 1000x above the median; residuals are stable.
+        try:
+            model = self._SARIMAX(history_arr, **self._sarimax_kwargs).fit(
+                **self._fit_kwargs
+            )
+            forecast = model.get_forecast(steps=int(horizon))
+            mean = np.asarray(forecast.predicted_mean, dtype=float).reshape(-1)
+            resid = np.asarray(model.resid, dtype=float).reshape(-1)
+            sigma = float(np.nanstd(resid)) if resid.size > 0 else 0.0
+            steps = np.arange(1, int(horizon) + 1, dtype=float)
+            y50 = mean
+            y_upper = mean + z_upper * sigma * np.sqrt(steps)
+        except Exception:
+            last = float(history_arr[-1])
+            std_hist = (
+                float(np.std(np.diff(history_arr))) if history_arr.size > 1 else 0.0
+            )
+            steps = np.arange(1, int(horizon) + 1, dtype=float)
+            y50 = np.full(int(horizon), last, dtype=float)
+            y_upper = y50 + z_upper * std_hist * np.sqrt(steps)
+        y_upper = np.maximum(y_upper, y50)
+        return y50.astype(float), y_upper.astype(float)
+
+    def predict_quantiles(
+        self,
+        history: np.ndarray | list[float],
+        horizon: int,
+    ) -> ProbabilisticForecast:
+        history_arr = np.asarray(history, dtype=float).reshape(-1)
+        if history_arr.size == 0:
+            raise ValueError("History must contain at least one value.")
+        if horizon <= 0:
+            raise ValueError("horizon must be positive.")
+        z_upper = float(self._norm.ppf(self.upper_quantile))
+        y50, y_upper = self._fit_one(history_arr, int(horizon), z_upper)
+        return ProbabilisticForecast(y_pred_median=y50, y_pred_95=y_upper)
+
+    def predict_quantiles_batch(
+        self,
+        histories: np.ndarray | Sequence[np.ndarray] | Sequence[list[float]],
+        horizon: int,
+        **kwargs: Any,
+    ) -> ProbabilisticForecastBatch:
+        histories_arr = _normalize_history_batch(histories)
+        z_upper = float(self._norm.ppf(self.upper_quantile))
+        try:
+            from joblib import Parallel, delayed
+
+            results = Parallel(n_jobs=self._n_jobs, prefer="processes")(
+                delayed(self._fit_one)(h, int(horizon), z_upper)
+                for h in histories_arr
+            )
+        except ImportError:
+            results = [
+                self._fit_one(h, int(horizon), z_upper) for h in histories_arr
+            ]
+        y50_rows = [r[0] for r in results]
+        y_upper_rows = [r[1] for r in results]
+        return ProbabilisticForecastBatch(
+            y_pred_median=np.stack(y50_rows, axis=0),
+            y_pred_95=np.stack(y_upper_rows, axis=0),
+        )
 
 
 class HybridForecastingChangePointPipeline:
@@ -1110,12 +1296,22 @@ def build_forecaster(
             model_id=chronos_model_id,
             device=device,
             num_samples=chronos_num_samples,
+            quantile_levels=quantiles,
         )
     if name in {"seasonal_naive", "seasonal-naive", "seasonalnaive"}:
-        return SeasonalNaiveForecaster(season_length=seasonal_period)
+        return SeasonalNaiveForecaster(
+            season_length=seasonal_period,
+            quantile_levels=quantiles,
+        )
+    if name in {"sarima", "sarimax"}:
+        return SarimaForecaster(
+            season_length=seasonal_period,
+            quantile_levels=quantiles,
+        )
 
     raise ValueError(
-        "Unsupported model_name. Expected one of: lstm, deepar, tft, chronos2, seasonal_naive."
+        "Unsupported model_name. Expected one of: "
+        "lstm, deepar, tft, chronos2, seasonal_naive, sarima."
     )
 
 

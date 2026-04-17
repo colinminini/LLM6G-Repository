@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timestamp-col", default=DEFAULT_TIMESTAMP_COL)
     parser.add_argument("--context-length", type=int, default=48)
     parser.add_argument("--horizon", type=int, default=48)
-    parser.add_argument("--quantiles", default="0.5,0.95")
+    parser.add_argument("--quantiles", default="0.5,0.99")
     parser.add_argument("--random-seed", type=int, default=DEFAULT_RANDOM_SEED)
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.10)

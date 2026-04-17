@@ -63,7 +63,7 @@ def _resolve_checkpoint(
     model_name: str,
     dataset_name: str,
 ) -> Path | None:
-    if model_name in {"chronos2", "seasonal_naive"}:
+    if model_name in {"chronos2", "seasonal_naive", "sarima"}:
         return None
     if explicit_path is not None:
         return explicit_path
@@ -83,12 +83,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timestamp-col", default=DEFAULT_TIMESTAMP_COL)
     parser.add_argument("--context-length", type=int, default=48)
     parser.add_argument("--horizon", type=int, default=48)
-    parser.add_argument("--quantiles", default="0.5,0.95")
+    parser.add_argument("--quantiles", default="0.5,0.99")
     parser.add_argument("--random-seed", type=int, default=DEFAULT_RANDOM_SEED)
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.10)
     parser.add_argument("--test-ratio", type=float, default=0.20)
-    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive")
+    parser.add_argument("--models", default="lstm,deepar,tft,chronos2,seasonal_naive,sarima")
     parser.add_argument("--splits", default="val,test")
     parser.add_argument("--sampling-mode", choices=("random", "rolling"), default="rolling", help=argparse.SUPPRESS)
     parser.add_argument("--random-windows-per-series", type=int, default=50, help=argparse.SUPPRESS)

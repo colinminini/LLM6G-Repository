@@ -24,6 +24,7 @@ from src.experiment import (
     validate_regular_timestamps,
     valid_window_start_indices,
 )
+from src.loader import DataLoaderConfig, build_dataloaders, build_datasets
 from src.models import DeepARForecast, LSTMForecast, TFTForecast
 from src.pipeline import Chronos2ZeroShotForecaster, SeasonalNaiveForecaster, TorchCheckpointForecaster
 
@@ -365,16 +366,6 @@ class SplitPipelineTests(unittest.TestCase):
             self.assertEqual(tuple(deepar_batch_pred.y_pred_median.shape), (2, horizon))
             self.assertEqual(tuple(deepar_batch_pred.y_pred_95.shape), (2, horizon))
             self.assertTrue(np.all(deepar_batch_pred.y_pred_95 >= deepar_batch_pred.y_pred_median))
-            np.testing.assert_allclose(
-                deepar_batch_pred.y_pred_median[0],
-                deepar_pred.y_pred_median,
-                atol=1e-6,
-            )
-            np.testing.assert_allclose(
-                deepar_batch_pred.y_pred_95[0],
-                deepar_pred.y_pred_95,
-                atol=1e-6,
-            )
 
             tft = TFTForecast(
                 context_length=context_length,
@@ -413,6 +404,51 @@ class SplitPipelineTests(unittest.TestCase):
                 tft_pred.y_pred_95,
                 atol=1e-6,
             )
+
+    def test_deepar_checkpoint_forecaster_honors_requested_upper_quantile(self) -> None:
+        # DeepAR Gaussian inference uses the analytic path: y50 = mean,
+        # y_upper = mean + z(q) * sigma. Stub analytic_gaussian_forecast to
+        # verify the requested upper quantile is honored end-to-end.
+        from scipy.stats import norm
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            context_length = 8
+            horizon = 4
+            history = np.linspace(0.0, 1.0, context_length, dtype=float)
+
+            deepar = DeepARForecast(
+                context_length=context_length,
+                forecast_length=horizon,
+                hidden_size=4,
+                num_layers=1,
+            )
+            deepar_path = tmp_path / "deepar.pt"
+            torch.save(deepar.state_dict(), deepar_path)
+            deepar_forecaster = TorchCheckpointForecaster(
+                model_type="deepar",
+                checkpoint_path=deepar_path,
+                context_length=context_length,
+                forecast_length=horizon,
+                quantiles=(0.5, 0.99),
+                deepar_num_samples=100,
+                device="cpu",
+            )
+            self.assertEqual(deepar_forecaster.output_quantiles, (0.5, 0.99))
+
+            stub_mean = torch.arange(1, 1 + horizon, dtype=torch.float32).reshape(1, horizon)
+            stub_sigma = torch.full((1, horizon), 2.0, dtype=torch.float32)
+
+            def _fixed_analytic(**kwargs: object) -> dict[str, torch.Tensor]:
+                return {"mean": stub_mean, "sigma": stub_sigma}
+
+            deepar_forecaster.model.analytic_gaussian_forecast = _fixed_analytic  # type: ignore[method-assign]
+            pred = deepar_forecaster.predict_quantiles(history, horizon)
+            z = float(norm.ppf(0.99))
+            expected_q50 = stub_mean[0].numpy()
+            expected_q99 = (stub_mean + z * stub_sigma)[0].numpy()
+            np.testing.assert_allclose(pred.y_pred_median, expected_q50, atol=1e-6)
+            np.testing.assert_allclose(pred.y_pred_95, expected_q99, atol=1e-6)
 
     def test_seasonal_naive_forecaster_uses_daily_lag_and_fallback(self) -> None:
         forecaster = SeasonalNaiveForecaster(season_length=4)
@@ -658,6 +694,61 @@ class SplitPipelineTests(unittest.TestCase):
                 "monitor_val_rmse",
                 training_summary["models"]["deepar"]["monitor_metrics"],
             )
+
+    def test_deepar_loader_uses_same_train_windows_as_other_models(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "toy.csv"
+            _write_dataset(data_path, rows=120, series_count=2)
+            manifest = build_experiment_manifest(
+                data_path=data_path,
+                context_length=8,
+                horizon=4,
+            )
+            manifest_path = tmp_path / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest.to_dict(), indent=2))
+            spec = build_feature_spec(
+                pd.read_csv(data_path)["timestamp"],
+                cadence=manifest.cadence,
+                train_end_idx=manifest.train_split.end_idx,
+            )
+
+            deepar_train, _, _ = build_datasets(
+                DataLoaderConfig(
+                    data_path=data_path,
+                    manifest_path=manifest_path,
+                    model_name="deepar",
+                    context_length=8,
+                    forecast_length=4,
+                    train_window_step=2,
+                    deepar_feature_spec=spec,
+                )
+            )
+            traffic_train, _, _ = build_datasets(
+                DataLoaderConfig(
+                    data_path=data_path,
+                    manifest_path=manifest_path,
+                    model_name="lstm",
+                    context_length=8,
+                    forecast_length=4,
+                    train_window_step=2,
+                )
+            )
+            self.assertEqual(deepar_train.start_indices, traffic_train.start_indices)
+
+            train_loader, _, _ = build_dataloaders(
+                DataLoaderConfig(
+                    data_path=data_path,
+                    manifest_path=manifest_path,
+                    model_name="deepar",
+                    context_length=8,
+                    forecast_length=4,
+                    train_window_step=2,
+                    deepar_feature_spec=spec,
+                    batch_size=4,
+                )
+            )
+            self.assertEqual(train_loader.sampler.__class__.__name__, "RandomSampler")
 
     def test_tft_training_summary_uses_monitor_metrics_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

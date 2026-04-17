@@ -1,0 +1,4 @@
+split,start_idx,end_idx,num_rows
+train,0,6249,6249
+val,6249,7142,893
+test,7142,8928,1786

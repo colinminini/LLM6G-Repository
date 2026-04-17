@@ -1,0 +1,33 @@
+{
+  "model": "deepar",
+  "split": "test",
+  "timestamp_utc": "2026-04-17T09:54:31.081782+00:00",
+  "num_windows_total": 7400,
+  "MAE_CP": 7.1891891891891895,
+  "tau_mae_when_both_break": 7.1891891891891895,
+  "tolerance": 3,
+  "tolerance_hit_rate": 0.40513513513513516,
+  "tolerance_hit_rate_when_both_break": 0.40513513513513516,
+  "break_precision": 1.0,
+  "break_recall": 1.0,
+  "break_f1": 1.0,
+  "coverage_rate": 0.9490632812753661,
+  "sharpness": 2.01578928206974,
+  "relative_sharpness": 0.11697127591840803,
+  "relative_sharpness_mean_of_ratios": 0.14240271410840202,
+  "sharpness_covered": 3.7340617123395736,
+  "relative_sharpness_covered": 0.21888718638344085,
+  "covered_window_frac": 0.6954054054054054,
+  "undercoverage_window_frac": 0.3045945945945946,
+  "undercoverage_severity": 0.10817313311698626,
+  "cp_detector": {
+    "cp_detector": "clasp",
+    "cp_model": "normal",
+    "cp_penalty": 10.0,
+    "cp_min_size": 8,
+    "cp_jump": 1,
+    "cp_period_length": "16",
+    "cp_exclusion_radius": 0.05,
+    "cp_score_threshold": 0.5
+  }
+}

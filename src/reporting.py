@@ -32,6 +32,17 @@ PUBLISHED_FILENAME_OVERRIDES = {
     "example_windows_system_eval_test_plot": "pipeline_example_chronos2_test.png",
 }
 
+# Paper v2 narrative order: best trained pinball → cautionary Gaussian-NLL →
+# zero-shot foundation model → classical baseline.
+PAPER_MODEL_ORDER: tuple[str, ...] = ("tft", "lstm", "deepar", "chronos2", "seasonal_naive")
+PAPER_MODEL_LABELS: dict[str, str] = {
+    "tft": "TFT",
+    "lstm": "LSTM",
+    "deepar": "DeepAR",
+    "chronos2": "Chronos-2",
+    "seasonal_naive": "Seasonal Naive",
+}
+
 
 def _ensure_dir(path: str | Path) -> Path:
     out = Path(path)
@@ -41,6 +52,28 @@ def _ensure_dir(path: str | Path) -> Path:
 
 def _read_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text())
+
+
+def _resolve_upper_quantile(experiment_dir: Path, default: float = 0.99) -> float:
+    """Read the upper-quantile target from manifest.json (last entry of `quantiles`)."""
+    manifest_path = Path(experiment_dir) / "manifest.json"
+    if manifest_path.exists():
+        try:
+            payload = _read_json(manifest_path)
+            qs = payload.get("quantiles") or []
+            if qs:
+                return float(qs[-1])
+        except Exception:
+            pass
+    return float(default)
+
+
+def _q_label(q: float) -> str:
+    """Format a quantile as a compact label, e.g. 0.99 -> 'q99', 0.95 -> 'q95'."""
+    pct = q * 100.0
+    if abs(pct - round(pct)) < 1e-6:
+        return f"q{int(round(pct))}"
+    return f"q{pct:g}".replace(".", "_")
 
 
 def _save_figure(fig: plt.Figure, path: str | Path) -> Path:
@@ -306,6 +339,7 @@ def build_training_report(experiment_dir: str | Path) -> dict[str, str]:
     if not history_paths:
         return {}
 
+    upper_q = _resolve_upper_quantile(experiment_dir)
     metrics = [("loss", "Loss"), ("rmse", "RMSE"), ("coverage", "Coverage"), ("interval_width", "Interval Width")]
     outputs: dict[str, str] = {}
     for metric_key, title in metrics:
@@ -341,7 +375,13 @@ def build_training_report(experiment_dir: str | Path) -> dict[str, str]:
             plt.close(fig)
             continue
         if metric_key == "coverage":
-            ax.axhline(0.95, color="#d62728", linestyle="--", linewidth=1.2, label="target=0.95")
+            ax.axhline(
+                upper_q,
+                color="#d62728",
+                linestyle="--",
+                linewidth=1.2,
+                label=f"target={upper_q:g}",
+            )
         ax.set_title(f"Training {title}")
         ax.set_xlabel("Epoch")
         ax.set_ylabel(title)
@@ -360,6 +400,8 @@ def build_forecast_eval_report(experiment_dir: str | Path, splits: Sequence[str]
         return {}
 
     splits = list(splits) if splits is not None else sorted(p.name for p in forecast_dir.iterdir() if p.is_dir())
+    upper_q = _resolve_upper_quantile(experiment_dir)
+    upper_label = _q_label(upper_q)
     outputs: dict[str, str] = {}
     for split in splits:
         metrics_paths = sorted((forecast_dir / split).glob("*_forecast_metrics.json"))
@@ -370,9 +412,9 @@ def build_forecast_eval_report(experiment_dir: str | Path, splits: Sequence[str]
         fig, axes = plt.subplots(2, 2, figsize=(10, 6))
         metrics = [
             ("rmse_q50", "RMSE q50", None),
-            ("coverage_q95", "Coverage q95", 0.95),
+            ("coverage_q95", f"Coverage {upper_label}", upper_q),
             ("pinball_q50", "Pinball q50", None),
-            ("pinball_q95", "Pinball q95", None),
+            ("pinball_q95", f"Pinball {upper_label}", None),
         ]
         for ax, (key, title, target) in zip(axes.reshape(-1), metrics):
             ax.bar(df["model"], df[key], color="#1f77b4")
@@ -395,6 +437,7 @@ def build_system_eval_report(experiment_dir: str | Path, splits: Sequence[str] |
         return {}
 
     splits = list(splits) if splits is not None else sorted(p.name for p in system_dir.iterdir() if p.is_dir())
+    upper_q = _resolve_upper_quantile(experiment_dir)
     outputs: dict[str, str] = {}
     for split in splits:
         metrics_paths = sorted((system_dir / split).glob("*_system_metrics.json"))
@@ -402,37 +445,102 @@ def build_system_eval_report(experiment_dir: str | Path, splits: Sequence[str] |
             continue
         rows = [json.loads(path.read_text()) for path in metrics_paths]
         df = pd.DataFrame(rows).sort_values("model")
-        # compute relative_sharpness from windows CSV if not in summary JSON
-        if "relative_sharpness" not in df.columns:
-            rel_vals = []
-            for _, row in df.iterrows():
-                windows_path = system_dir / split / f"{row['model']}_system_windows.csv"
-                if windows_path.exists():
-                    wdf = pd.read_csv(windows_path, usecols=["sharpness", "actual_interval_max"])
-                    valid = wdf[wdf["actual_interval_max"] > 0]
-                    rel_vals.append((valid["sharpness"] / valid["actual_interval_max"]).mean())
-                else:
-                    rel_vals.append(float("nan"))
-            df["relative_sharpness"] = rel_vals
-        fig, axes = plt.subplots(2, 2, figsize=(10, 6))
+        # Backfill the new sharpness aggregations from windows CSVs when the summary
+        # JSON predates the metric fix. Keeps `rel_sharpness` (ratio-of-means) and the
+        # undercoverage decomposition consistent with current aggregation semantics.
+        df = _ensure_paper_system_metrics(df, system_dir / split)
+        df = _order_by_paper(df)
+
+        fig, axes = plt.subplots(2, 3, figsize=(13, 7))
         metrics = [
-            ("MAE_CP", "MAE CP"),
+            ("MAE_CP", "MAE CP (steps)"),
             ("tolerance_hit_rate", "Tolerance Hit Rate"),
-            ("coverage_rate", "Coverage Rate"),
-            ("relative_sharpness", "Relative Sharpness"),
+            ("coverage_rate", f"Coverage Rate (target={upper_q:g})"),
+            ("relative_sharpness_covered", "Rel. Sharpness | Covered"),
+            ("undercoverage_window_frac", "Undercovered Window Fraction"),
+            ("undercoverage_severity", "Undercoverage Severity"),
         ]
         for ax, (key, title) in zip(axes.reshape(-1), metrics):
-            ax.bar(df["model"], df[key], color="#ff7f0e")
+            values = df.get(key)
+            if values is None:
+                ax.set_visible(False)
+                continue
+            ax.bar(df["model"], values, color="#ff7f0e")
             if key == "coverage_rate":
-                ax.axhline(0.95, color="#d62728", linestyle="--", linewidth=1.2, label="target=0.95")
-                ax.legend(fontsize=8)
+                ax.axhline(upper_q, color="#d62728", linestyle="--", linewidth=1.2)
             ax.set_title(f"{title} ({split})")
             ax.tick_params(axis="x", rotation=20)
             ax.grid(axis="y", alpha=0.3)
+        fig.suptitle(
+            "System/control metrics — coverage and sharpness decomposed",
+            fontsize=11,
+        )
         plot_path = experiment_dir / "reports" / f"system_eval_{split}.png"
         _save_figure(fig, plot_path)
         outputs[f"system_eval_{split}_plot"] = str(plot_path)
     return outputs
+
+
+def _compute_paper_sharpness_fallback(windows_csv: Path) -> dict[str, float]:
+    """Recompute the new sharpness aggregations from a per-window CSV."""
+    from src.system_metrics import (
+        covered_sharpness_summary,
+        ratio_of_means,
+        undercoverage_summary,
+    )
+
+    wdf = pd.read_csv(windows_csv, usecols=["sharpness", "actual_interval_max"])
+    sharp = wdf["sharpness"].tolist()
+    actual = wdf["actual_interval_max"].tolist()
+    out: dict[str, float] = {
+        "sharpness": float(wdf["sharpness"].mean()),
+        "relative_sharpness": ratio_of_means(sharp, actual),
+    }
+    out.update(covered_sharpness_summary(sharp, actual))
+    out.update(undercoverage_summary(sharp, actual))
+    return out
+
+
+_PAPER_METRIC_KEYS = (
+    "relative_sharpness",
+    "sharpness_covered",
+    "relative_sharpness_covered",
+    "covered_window_frac",
+    "undercoverage_window_frac",
+    "undercoverage_severity",
+)
+
+
+def _ensure_paper_system_metrics(df: pd.DataFrame, split_dir: Path) -> pd.DataFrame:
+    """Add the new sharpness columns where the summary JSON predates the fix."""
+    missing_any = [k for k in _PAPER_METRIC_KEYS if k not in df.columns]
+    if not missing_any:
+        return df
+    for key in _PAPER_METRIC_KEYS:
+        if key not in df.columns:
+            df[key] = float("nan")
+    for idx, row in df.iterrows():
+        needs_any = any(pd.isna(row.get(k)) for k in _PAPER_METRIC_KEYS)
+        if not needs_any:
+            continue
+        windows_path = split_dir / f"{row['model']}_system_windows.csv"
+        if not windows_path.exists():
+            continue
+        computed = _compute_paper_sharpness_fallback(windows_path)
+        for k, v in computed.items():
+            if k in df.columns:
+                df.at[idx, k] = v
+    return df
+
+
+def _order_by_paper(df: pd.DataFrame) -> pd.DataFrame:
+    """Reindex rows to PAPER_MODEL_ORDER, keeping any extra models at the end."""
+    if "model" not in df.columns or df.empty:
+        return df
+    present = [m for m in PAPER_MODEL_ORDER if m in df["model"].values]
+    extras = [m for m in df["model"].tolist() if m not in PAPER_MODEL_ORDER]
+    ordered = present + extras
+    return df.set_index("model").loc[ordered].reset_index()
 
 
 def build_system_example_window_report(
@@ -449,6 +557,7 @@ def build_system_example_window_report(
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     system_dir = experiment_dir / "system_eval" / split
+    upper_label = _q_label(_resolve_upper_quantile(experiment_dir))
 
     if window_seed is not None and shared_selector is None:
         ref_path = system_dir / f"{PREFERRED_EXAMPLE_MODEL}_system_windows.csv"
@@ -494,7 +603,7 @@ def build_system_example_window_report(
         ax.plot(x_hist, history, label="history", color="#444444")
         ax.plot(x_future, future_true, label="future_true", color="#000000")
         ax.plot(x_future, y50, label="q50", color="#1f77b4")
-        ax.plot(x_future, y95, label="q95", color="#ff7f0e")
+        ax.plot(x_future, y95, label=upper_label, color="#ff7f0e")
         ax.hlines(
             safe_ceiling,
             xmin=x_future[0],
@@ -655,6 +764,7 @@ def build_calibrated_system_eval_report(
     if subset.empty:
         return {}
 
+    upper_q = _resolve_upper_quantile(experiment_dir)
     fig, axes = plt.subplots(2, 2, figsize=(11, 7))
     metric_specs = [
         ("MAE_CP", "MAE CP"),
@@ -675,7 +785,13 @@ def build_calibrated_system_eval_report(
         ax.bar(x - width / 2, raw_values, width=width, label="raw", color="#7f7f7f")
         ax.bar(x + width / 2, calibrated_values, width=width, label="calibrated", color="#2ca02c")
         if metric_key == "coverage_rate":
-            ax.axhline(0.95, color="#d62728", linestyle="--", linewidth=1.2, label="target=0.95")
+            ax.axhline(
+                upper_q,
+                color="#d62728",
+                linestyle="--",
+                linewidth=1.2,
+                label=f"target={upper_q:g}",
+            )
         ax.set_xticks(x)
         ax.set_xticklabels(subset["model"], rotation=20)
         ax.set_title(f"{title} ({split})")
@@ -701,6 +817,7 @@ def build_example_window_report(
 ) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     forecast_dir = experiment_dir / "forecast_eval" / split
+    upper_label = _q_label(_resolve_upper_quantile(experiment_dir))
 
     # If a seed is given and no explicit shared_selector, pick a random (series, start_index)
     # from the reference model's windows so the same window is shown for all models.
@@ -745,7 +862,7 @@ def build_example_window_report(
         ax.plot(x_hist, history, label="history", color="#444444")
         ax.plot(x_future, future_true, label="future_true", color="#000000")
         ax.plot(x_future, y50, label="q50", color="#1f77b4")
-        ax.plot(x_future, y95, label="q95", color="#ff7f0e")
+        ax.plot(x_future, y95, label=upper_label, color="#ff7f0e")
         ax.set_title(f"{model_name} | series={row['series']} | start={int(row['start_index'])}")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
@@ -799,6 +916,279 @@ def build_report_metadata(experiment_dir: str | Path) -> dict[str, str]:
     return {"report_metadata": str(metadata_path)}
 
 
+def build_paper_results_tables(
+    experiment_dir: str | Path,
+    splits: Sequence[str] | None = None,
+) -> dict[str, str]:
+    """Emit paper-v2 result tables and the energy-sharpness Pareto plot.
+
+    Generates three aligned tables and one plot per split:
+
+    - ``forecast_quality_<split>``: point-accuracy metrics (claim #2, "forecast ≠ control").
+    - ``control_quality_<split>``: coverage and sharpness decomposed so undercoverage
+      is separated from over-provisioning slack (claim #1 and supporting evidence for #2).
+    - ``energy_vs_sharpness_<split>``: annual deployment FLOPs, Joules, and rel_sharpness
+      improvement over seasonal_naive for the energy-Pareto story (claim #3).
+    - ``energy_scenarios_<split>``: raw deployment scaling table across market scenarios.
+    - ``energy_pareto_<split>.png``: rel_sharpness_covered versus annual deployment FLOPs.
+    """
+    experiment_dir = Path(experiment_dir)
+    forecast_dir = experiment_dir / "forecast_eval"
+    system_dir = experiment_dir / "system_eval"
+    energy_dir = experiment_dir / "energy"
+    tables_dir = experiment_dir / "reports" / "tables"
+    outputs: dict[str, str] = {}
+
+    if not system_dir.exists():
+        return outputs
+
+    if splits is None:
+        splits = sorted(p.name for p in system_dir.iterdir() if p.is_dir())
+
+    for split in splits:
+        forecast_df = _collect_forecast_quality(forecast_dir / split)
+        control_df = _collect_control_quality(system_dir / split)
+        energy_df = _collect_energy_table(energy_dir / split, control_df)
+        scenario_df = _collect_energy_scenarios_table(energy_dir / split, control_df)
+
+        if not forecast_df.empty:
+            paths = _write_table(forecast_df, tables_dir, f"forecast_quality_{split}", _FORECAST_COLS)
+            outputs.update({f"forecast_quality_{split}_{k}": v for k, v in paths.items()})
+        if not control_df.empty:
+            paths = _write_table(control_df, tables_dir, f"control_quality_{split}", _CONTROL_COLS)
+            outputs.update({f"control_quality_{split}_{k}": v for k, v in paths.items()})
+        if not energy_df.empty:
+            paths = _write_table(energy_df, tables_dir, f"energy_vs_sharpness_{split}", _ENERGY_COLS)
+            outputs.update({f"energy_vs_sharpness_{split}_{k}": v for k, v in paths.items()})
+            pareto_path = _plot_energy_pareto(energy_df, experiment_dir, split)
+            if pareto_path is not None:
+                outputs[f"energy_pareto_{split}_plot"] = str(pareto_path)
+        if not scenario_df.empty:
+            paths = _write_table(scenario_df, tables_dir, f"energy_scenarios_{split}", _ENERGY_SCENARIO_COLS)
+            outputs.update({f"energy_scenarios_{split}_{k}": v for k, v in paths.items()})
+
+    return outputs
+
+
+_FORECAST_COLS: tuple[tuple[str, str, str], ...] = (
+    ("model", "Model", "label"),
+    ("rmse_q50", "RMSE q50", "float3"),
+    ("pinball_q50", "Pinball q50", "float3"),
+    ("pinball_q_upper", "Pinball q99", "float3"),
+    ("coverage_q_upper", "Coverage q99", "float3"),
+)
+
+_CONTROL_COLS: tuple[tuple[str, str, str], ...] = (
+    ("model", "Model", "label"),
+    ("MAE_CP", "MAE_CP (steps)", "float2"),
+    ("tolerance_hit_rate", "Tol. Hit Rate", "float3"),
+    ("coverage_rate", "Coverage", "float3"),
+    ("relative_sharpness_covered", "Rel. Sharp. (covered)", "float3"),
+    ("sharpness_covered", "Sharp. (covered)", "float2"),
+    ("undercoverage_window_frac", "Undercov. Window %", "pct"),
+    ("undercoverage_severity", "Undercov. Severity", "float3"),
+)
+
+_ENERGY_COLS: tuple[tuple[str, str, str], ...] = (
+    ("model", "Model", "label"),
+    ("params", "Params", "int_sci"),
+    ("annual_infer_flops_per_market", "Annual Infer FLOPs / Market", "sci"),
+    ("annual_retrain_flops_market_10", "Annual Retrain FLOPs (10 mkts)", "sci"),
+    ("annual_total_flops_market_10", "Annual Total FLOPs (10 mkts)", "sci"),
+    ("annual_energy_J_gpu_market_10", "Annual GPU Joules (10 mkts)", "sci"),
+    ("annual_energy_J_cpu_market_10", "Annual CPU Joules (10 mkts)", "sci"),
+    ("relative_sharpness_covered", "Rel. Sharp. (covered)", "float3"),
+    ("rel_sharpness_improvement_vs_naive", "Δ vs Naive", "float3"),
+)
+
+
+_ENERGY_SCENARIO_COLS: tuple[tuple[str, str, str], ...] = (
+    ("model", "Model", "label"),
+    ("markets", "Markets", "int"),
+    ("annual_retrain_flops", "Annual Retrain FLOPs", "sci"),
+    ("annual_infer_flops_total", "Annual Infer FLOPs", "sci"),
+    ("annual_total_flops", "Annual Total FLOPs", "sci"),
+    ("annual_energy_J_gpu", "Annual GPU Joules", "sci"),
+    ("annual_energy_J_cpu", "Annual CPU Joules", "sci"),
+    ("relative_sharpness_covered", "Rel. Sharp. (covered)", "float3"),
+    ("rel_sharpness_improvement_vs_naive", "Δ vs Naive", "float3"),
+)
+
+
+def _collect_forecast_quality(split_dir: Path) -> pd.DataFrame:
+    if not split_dir.exists():
+        return pd.DataFrame()
+    rows = [json.loads(p.read_text()) for p in sorted(split_dir.glob("*_forecast_metrics.json"))]
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    # Normalize the upper-quantile label: prefer the schema-fixed *q_upper* key,
+    # then fall back to the legacy *q95* alias (old q95 runs used a literal q95
+    # key even when the configured quantile was different).
+    if "pinball_q_upper" not in df.columns and "pinball_q95" in df.columns:
+        df["pinball_q_upper"] = df["pinball_q95"]
+    if "coverage_q_upper" not in df.columns and "coverage_q95" in df.columns:
+        df["coverage_q_upper"] = df["coverage_q95"]
+    return _order_by_paper(df)
+
+
+def _collect_control_quality(split_dir: Path) -> pd.DataFrame:
+    if not split_dir.exists():
+        return pd.DataFrame()
+    rows = [json.loads(p.read_text()) for p in sorted(split_dir.glob("*_system_metrics.json"))]
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df = _ensure_paper_system_metrics(df, split_dir)
+    return _order_by_paper(df)
+
+
+def _collect_energy_table(split_dir: Path, control_df: pd.DataFrame) -> pd.DataFrame:
+    summary_csv = split_dir / "energy_summary.csv"
+    if not summary_csv.exists():
+        return pd.DataFrame()
+    energy_df = pd.read_csv(summary_csv)
+    if control_df.empty or "relative_sharpness_covered" not in control_df.columns:
+        merged = energy_df.copy()
+        merged["relative_sharpness_covered"] = float("nan")
+        merged["rel_sharpness_improvement_vs_naive"] = float("nan")
+    else:
+        merged = energy_df.merge(
+            control_df[["model", "relative_sharpness_covered"]],
+            on="model",
+            how="left",
+        )
+        naive_row = merged[merged["model"] == "seasonal_naive"]
+        if not naive_row.empty and pd.notna(naive_row["relative_sharpness_covered"].iloc[0]):
+            baseline = float(naive_row["relative_sharpness_covered"].iloc[0])
+            merged["rel_sharpness_improvement_vs_naive"] = (
+                baseline - merged["relative_sharpness_covered"]
+            )
+        else:
+            merged["rel_sharpness_improvement_vs_naive"] = float("nan")
+    return _order_by_paper(merged)
+
+
+def _collect_energy_scenarios_table(split_dir: Path, control_df: pd.DataFrame) -> pd.DataFrame:
+    scenarios_csv = split_dir / "energy_scenarios.csv"
+    if not scenarios_csv.exists():
+        return pd.DataFrame()
+    scenario_df = pd.read_csv(scenarios_csv)
+    if control_df.empty or "relative_sharpness_covered" not in control_df.columns:
+        merged = scenario_df.copy()
+        merged["relative_sharpness_covered"] = float("nan")
+        merged["rel_sharpness_improvement_vs_naive"] = float("nan")
+    else:
+        merged = scenario_df.merge(
+            control_df[["model", "relative_sharpness_covered"]],
+            on="model",
+            how="left",
+        )
+        naive_row = control_df[control_df["model"] == "seasonal_naive"]
+        if not naive_row.empty and pd.notna(naive_row["relative_sharpness_covered"].iloc[0]):
+            baseline = float(naive_row["relative_sharpness_covered"].iloc[0])
+            merged["rel_sharpness_improvement_vs_naive"] = (
+                baseline - merged["relative_sharpness_covered"]
+            )
+        else:
+            merged["rel_sharpness_improvement_vs_naive"] = float("nan")
+    merged = _order_by_paper(merged)
+    return merged.sort_values(["markets", "model"], kind="stable").reset_index(drop=True)
+
+
+def _fmt_cell(value: Any, fmt: str) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and np.isnan(value):
+        return "—"
+    if fmt == "label":
+        return PAPER_MODEL_LABELS.get(str(value), str(value))
+    if fmt == "float2":
+        return f"{float(value):.2f}"
+    if fmt == "float3":
+        return f"{float(value):.3f}"
+    if fmt == "pct":
+        return f"{100.0 * float(value):.1f}%"
+    if fmt == "sci":
+        return f"{float(value):.2e}"
+    if fmt == "int":
+        return f"{int(value)}"
+    if fmt == "int_sci":
+        v = float(value)
+        return f"{int(round(v)):,}" if v < 1e6 else f"{v:.2e}"
+    return str(value)
+
+
+def _write_table(
+    df: pd.DataFrame,
+    tables_dir: Path,
+    name: str,
+    columns: Sequence[tuple[str, str, str]],
+) -> dict[str, str]:
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    present = [(key, header, fmt) for key, header, fmt in columns if key in df.columns]
+    # CSV: raw numeric values (no formatting) for downstream tools.
+    csv_path = tables_dir / f"{name}.csv"
+    df[[k for k, _, _ in present]].to_csv(csv_path, index=False)
+    # Markdown: formatted, paper-ready.
+    headers = [h for _, h, _ in present]
+    md_lines: list[str] = []
+    md_lines.append("| " + " | ".join(headers) + " |")
+    md_lines.append("|" + "|".join("---" for _ in headers) + "|")
+    for _, row in df.iterrows():
+        cells = [_fmt_cell(row.get(k), fmt) for k, _, fmt in present]
+        md_lines.append("| " + " | ".join(cells) + " |")
+    md_path = tables_dir / f"{name}.md"
+    md_path.write_text("\n".join(md_lines) + "\n")
+    return {"csv": str(csv_path), "md": str(md_path)}
+
+
+def _plot_energy_pareto(
+    energy_df: pd.DataFrame,
+    experiment_dir: Path,
+    split: str,
+) -> Path | None:
+    x_col = None
+    for candidate in ("annual_total_flops_market_10", "annual_total_flops_headline"):
+        if candidate in energy_df.columns:
+            x_col = candidate
+            break
+    if energy_df.empty or x_col is None:
+        return None
+    plot_df = energy_df.dropna(
+        subset=[x_col, "relative_sharpness_covered"]
+    ).copy()
+    if plot_df.empty:
+        return None
+    fig, ax = plt.subplots(figsize=(7.5, 5.0))
+    for _, row in plot_df.iterrows():
+        label = PAPER_MODEL_LABELS.get(str(row["model"]), str(row["model"]))
+        ax.scatter(
+            max(row[x_col], 1.0),
+            row["relative_sharpness_covered"],
+            s=110,
+            edgecolor="black",
+            linewidths=0.5,
+            zorder=3,
+        )
+        ax.annotate(
+            label,
+            (max(row[x_col], 1.0), row["relative_sharpness_covered"]),
+            xytext=(7, 5),
+            textcoords="offset points",
+            fontsize=10,
+        )
+    ax.set_xscale("log")
+    ax.set_xlabel("Annual deployment FLOPs (10 markets, log scale)")
+    ax.set_ylabel("Relative sharpness on covered windows (lower is tighter)")
+    ax.set_title(f"Operational cost vs. covered sharpness ({split})")
+    ax.grid(True, which="both", alpha=0.3)
+    fig.tight_layout()
+    out_path = experiment_dir / "reports" / f"energy_pareto_{split}.png"
+    _save_figure(fig, out_path)
+    return out_path
+
+
 def build_report_bundle(experiment_dir: str | Path, *, window_seed: int | None = None) -> dict[str, str]:
     experiment_dir = Path(experiment_dir)
     outputs: dict[str, str] = {}
@@ -811,6 +1201,7 @@ def build_report_bundle(experiment_dir: str | Path, *, window_seed: int | None =
     outputs.update(build_tau_calibration_report(experiment_dir))
     outputs.update(build_calibrated_system_eval_report(experiment_dir))
     outputs.update(build_example_window_report(experiment_dir, window_seed=window_seed))
+    outputs.update(build_paper_results_tables(experiment_dir))
     outputs.update(build_report_metadata(experiment_dir))
     index_path = experiment_dir / "reports" / "report_index.json"
     index_path.parent.mkdir(parents=True, exist_ok=True)

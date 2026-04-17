@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Tuple
 
 import torch
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader
 
 from src.config import DEFAULT_DATASET_PATH, DEFAULT_TIMESTAMP_COL
 from src.dataset import DeepARWindowDataset, TFTWindowDataset, TrafficWindowDataset
@@ -49,7 +49,7 @@ def build_datasets(config: DataLoaderConfig) -> Tuple[torch.utils.data.Dataset, 
                 timestamp_col=config.timestamp_col,
                 manifest=manifest,
                 window_step=config.train_window_step,
-                allow_left_padding=True,
+                allow_left_padding=False,
                 feature_spec=config.deepar_feature_spec,
                 dtype=config.dtype,
             ),
@@ -158,21 +158,10 @@ def build_dataloaders(
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     train_ds, val_ds, test_ds = build_datasets(config)
 
-    train_sampler = None
-    shuffle_train = config.shuffle_train
-    if config.model_name.strip().lower() == "deepar":
-        train_sampler = WeightedRandomSampler(
-            weights=getattr(train_ds, "sampling_weights"),
-            num_samples=len(train_ds),
-            replacement=True,
-        )
-        shuffle_train = False
-
     train_loader = DataLoader(
         train_ds,
         batch_size=config.batch_size,
-        shuffle=shuffle_train,
-        sampler=train_sampler,
+        shuffle=config.shuffle_train,
         num_workers=config.num_workers,
         pin_memory=config.pin_memory,
         drop_last=config.drop_last,
